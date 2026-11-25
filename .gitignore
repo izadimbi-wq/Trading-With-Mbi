@@ -1,0 +1,12 @@
+.gradle/
+build/
+**/build/
+.venv/
+__pycache__/
+*.py[cod]
+.env
+*.log
+.idea/
+local.properties
+*.ex4
+*.set

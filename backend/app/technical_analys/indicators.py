@@ -131,3 +131,52 @@ def atr(highs, lows, closes, period=14):
 
     return result
 
+def macd(prices, fast=12, slow=26, signal=9):
+    prices = _validate_prices(prices)
+
+    periods = (fast, slow, signal)
+
+    if any(
+        not isinstance(p, int) or isinstance(p, bool) or p < 1
+        for p in periods
+    ):
+        raise ValueError("MACD periods must be positive integers.")
+
+    if fast >= slow:
+        raise ValueError("Fast period must be smaller than slow period.")
+
+    if len(prices) < slow + signal - 1:
+        return None
+
+    fast_multiplier = 2.0 / (fast + 1)
+    slow_multiplier = 2.0 / (slow + 1)
+
+    fast_ema = sum(prices[:fast]) / fast
+    slow_ema = sum(prices[:slow]) / slow
+
+    macd_values = []
+
+    for index in range(slow, len(prices)):
+        fast_ema = (
+            prices[index] * fast_multiplier
+            + fast_ema * (1 - fast_multiplier)
+        )
+
+        slow_ema = (
+            prices[index] * slow_multiplier
+            + slow_ema * (1 - slow_multiplier)
+        )
+
+        macd_values.append(fast_ema - slow_ema)
+
+    if len(macd_values) < signal:
+        return None
+
+    signal_line = ema(macd_values, signal)
+
+    return {
+        "macd": macd_values[-1],
+        "signal": signal_line,
+        "histogram": macd_values[-1] - signal_line
+    }
+

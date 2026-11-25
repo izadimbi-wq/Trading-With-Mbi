@@ -44,3 +44,62 @@ jobs:
             git commit -m "Extract Trading AI Starter Package"
             git push
           fi
+
+
+name: Build Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+
+      - name: Check Android Project
+        working-directory: android-app/app
+        run: |
+          echo "Checking Android project files..."
+          ls -la
+          if [ ! -f settings.gradle.kts ] && [ ! -f settings.gradle ]; then
+            echo "ERROR: Gradle settings file not found in android-app/app"
+            exit 1
+          fi
+
+      - name: Build Debug APK
+        working-directory: android-app/app
+        run: |
+          if [ -f gradlew ]; then
+            chmod +x gradlew
+            ./gradlew assembleDebug
+          else
+            gradle assembleDebug
+          fi
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Trading-With-Mbi-APK
+          path: android-app/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 14

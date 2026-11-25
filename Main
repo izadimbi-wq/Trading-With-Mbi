@@ -1,0 +1,3 @@
+git remote add origin https://github.com/izadimbi-wq/Trading-With-Mbi.git
+git branch -M main
+git push -u origin main

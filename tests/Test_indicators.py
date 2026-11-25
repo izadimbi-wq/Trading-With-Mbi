@@ -1,4 +1,4 @@
-
+ا
 
 import pytest
 
@@ -88,3 +88,22 @@ def test_macd_invalid_periods():
 
     with pytest.raises(ValueError):
         macd(prices, fast=26, slow=12)
+def test_macd_negative_values():
+    prices = [100.0 - i for i in range(100)]
+
+    result = macd(prices)
+
+    assert result is not None
+    assert result["macd"] < 0
+    assert result["signal"] < 0
+
+
+def test_macd_histogram_calculation():
+    prices = [100.0 - i for i in range(100)]
+
+    result = macd(prices)
+
+    assert result is not None
+    assert result["histogram"] == pytest.approx(
+        result["macd"] - result["signal"]
+    )

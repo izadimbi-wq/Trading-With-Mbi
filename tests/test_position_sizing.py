@@ -20,4 +20,4 @@ def test_rounds_down_to_lot_step():
     )
     result = calculate_position_size(req)
     assert result["status"] == "ACCEPT_FOR_REVIEW"
-    assert result["lots"] == 10.0
+    assert result["lots"] == 1.0

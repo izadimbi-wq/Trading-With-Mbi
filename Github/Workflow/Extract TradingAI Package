@@ -1,12 +1,12 @@
 
-name: Extract TradingAI Package
+name: Extract Trading AI Starter Package
 
 on:
+  workflow_dispatch:
   push:
     paths:
-      - "*.zip"
-      - "**/*.zip"
-  workflow_dispatch:
+      - 'TradingAI_Starter_Package.zip'
+      - '.github/workflows/extract-package.yml'
 
 permissions:
   contents: write
@@ -18,63 +18,20 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          persist-credentials: true
 
       - name: Extract ZIP package
-        shell: bash
         run: |
-          set -e
+          mkdir -p extracted
 
-          ZIP_FILE=$(find . -type f -name "*.zip" \
-            -not -path "./.git/*" | head -n 1)
+          unzip -q TradingAI_Starter_Package.zip -d extracted
 
-          if [ -z "$ZIP_FILE" ]; then
-            echo "No ZIP file found."
-            exit 1
+          if [ -d extracted/TradingAI_Starter ]; then
+            cp -a extracted/TradingAI_Starter/. .
+          else
+            cp -a extracted/. .
           fi
 
-          echo "Extracting: $ZIP_FILE"
-
-          python3 - "$ZIP_FILE" <<'PY'
-          import sys
-          import zipfile
-          from pathlib import Path, PurePosixPath
-
-          archive = Path(sys.argv[1])
-          destination = Path(".").resolve()
-
-          with zipfile.ZipFile(archive, "r") as z:
-              for item in z.infolist():
-                  name = item.filename.replace("\\", "/")
-                  path = PurePosixPath(name)
-
-                  if path.is_absolute() or ".." in path.parts:
-                      raise RuntimeError(f"Unsafe ZIP path: {name}")
-
-                  parts = path.parts
-
-                  # Remove the outer TradingAI_Starter directory.
-                  if parts and parts[0] == "TradingAI_Starter":
-                      parts = parts[1:]
-
-                  if not parts:
-                      continue
-
-                  target = destination.joinpath(*parts).resolve()
-
-                  if target != destination and destination not in target.parents:
-                      raise RuntimeError(f"Unsafe extraction target: {name}")
-
-                  if item.is_dir():
-                      target.mkdir(parents=True, exist_ok=True)
-                  else:
-                      target.parent.mkdir(parents=True, exist_ok=True)
-                      with z.open(item) as source, open(target, "wb") as output:
-                          output.write(source.read())
-
-          print("ZIP extraction completed successfully.")
-          PY
+          rm -rf extracted
 
       - name: Commit extracted files
         run: |
@@ -83,10 +40,7 @@ jobs:
 
           git add -A
 
-          if git diff --cached --quiet; then
-            echo "No changes to commit."
-          else
-            git commit -m "Extract TradingAI starter package"
+          if ! git diff --cached --quiet; then
+            git commit -m "Extract Trading AI Starter Package"
             git push
           fi
-

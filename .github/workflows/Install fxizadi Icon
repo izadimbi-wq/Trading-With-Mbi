@@ -1,0 +1,46 @@
+
+name: Install fxizadi Android Icon
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  install-icon:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Extract Icon Resources
+        run: |
+          ZIP="fxizadi_android_launcher_resources.zip"
+          TARGET="android-app/app/src/main/res"
+
+          if [ ! -f "$ZIP" ]; then
+            echo "Icon ZIP not found"
+            exit 1
+          fi
+
+          mkdir -p "$TARGET"
+          unzip -o "$ZIP" -d /tmp/fxizadi-icon
+
+          cp -a /tmp/fxizadi-icon/res/. "$TARGET/"
+
+          echo "===== INSTALLED ICON FILES ====="
+          find "$TARGET" -type f | sort
+
+      - name: Commit Icon Resources
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add android-app/app/src/main/res
+
+          if ! git diff --cached --quiet; then
+            git commit -m "Add fxizadi Android launcher icon"
+            git push
+          fi

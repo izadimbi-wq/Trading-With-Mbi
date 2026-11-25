@@ -10,9 +10,20 @@ def _valid_number(value):
     )
 
 
+def _no_trade(status, reason):
+    return {
+        "signal": "NO TRADE",
+        "status": status,
+        "reason": reason,
+        "buy_confirmations": [],
+        "sell_confirmations": [],
+        "required_confirmations": 5
+    }
+
+
 def generate_signal(indicators):
     """
-    Generate BUY, SELL or NO TRADE from calculated indicators.
+    Generate BUY, SELL or NO TRADE.
 
     This function does not execute trading orders.
     """
@@ -42,6 +53,7 @@ def generate_signal(indicators):
         for item in (
             ema_data,
             rsi_data,
+            atr_data,
             macd_data,
             ichimoku_data
         )
@@ -76,13 +88,10 @@ def generate_signal(indicators):
         _valid_number(value)
         for value in numeric_values
     ):
-        return {
-            "signal": "NO TRADE",
-            "status": "INVALID_INDICATOR_DATA",
-            "reason": "One or more indicator values are invalid.",
-            "buy_confirmations": [],
-            "sell_confirmations": []
-        }
+        return _no_trade(
+            "INVALID_INDICATOR_DATA",
+            "One or more indicator values are invalid."
+        )
 
     if (
         ema_fast <= 0
@@ -90,39 +99,30 @@ def generate_signal(indicators):
         or atr_value <= 0
         or not 0 <= rsi_value <= 100
     ):
-        return {
-            "signal": "NO TRADE",
-            "status": "INVALID_INDICATOR_DATA",
-            "reason": "Indicator values are outside valid ranges.",
-            "buy_confirmations": [],
-            "sell_confirmations": []
-        }
+        return _no_trade(
+            "INVALID_INDICATOR_DATA",
+            "Indicator values are outside valid ranges."
+        )
 
     if price_vs_cloud not in (
         "ABOVE",
         "BELOW",
         "INSIDE"
     ):
-        return {
-            "signal": "NO TRADE",
-            "status": "INSUFFICIENT_DATA",
-            "reason": "Current Ichimoku cloud position is unavailable.",
-            "buy_confirmations": [],
-            "sell_confirmations": []
-        }
+        return _no_trade(
+            "INSUFFICIENT_DATA",
+            "Current Ichimoku cloud position is unavailable."
+        )
 
     if tenkan_kijun_bias not in (
         "BULLISH",
         "BEARISH",
         "NEUTRAL"
     ):
-        return {
-            "signal": "NO TRADE",
-            "status": "INVALID_INDICATOR_DATA",
-            "reason": "Invalid Ichimoku Tenkan/Kijun bias.",
-            "buy_confirmations": [],
-            "sell_confirmations": []
-        }
+        return _no_trade(
+            "INVALID_INDICATOR_DATA",
+            "Invalid Ichimoku Tenkan/Kijun bias."
+        )
 
     buy_confirmations = []
     sell_confirmations = []

@@ -1,0 +1,31 @@
+
+name: Inspect Android Project
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Show extracted project structure
+        run: |
+          echo "===== ROOT FILES ====="
+          ls -la
+          echo "===== PROJECT FILES ====="
+          find . -maxdepth 5 -type f \
+            \( -name "gradlew" \
+            -o -name "settings.gradle" \
+            -o -name "settings.gradle.kts" \
+            -o -name "build.gradle" \
+            -o -name "build.gradle.kts" \
+            -o -name "AndroidManifest.xml" \
+            -o -name "package.json" \
+            -o -name "pubspec.yaml" \) \
+            -print

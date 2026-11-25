@@ -36,7 +36,8 @@ DEFAULT_SETTINGS = {
     "macd_signal": 9,
     "ichimoku_tenkan": 9,
     "ichimoku_kijun": 26,
-    "ichimoku_senkou_b": 52
+    "ichimoku_senkou_b": 52,
+    "ichimoku_displacement": 26
 }
 
 
@@ -136,6 +137,7 @@ def calculate_indicators(candles):
         settings["atr_period"] + 1,
         settings["macd_slow"] + settings["macd_signal"] - 1,
         settings["ichimoku_senkou_b"]
+        + settings["ichimoku_displacement"]
     )
 
     if len(candles) < required_candles:
@@ -177,9 +179,11 @@ def calculate_indicators(candles):
     ichimoku_value = ichimoku(
         highs,
         lows,
-        settings["ichimoku_tenkan"],
-        settings["ichimoku_kijun"],
-        settings["ichimoku_senkou_b"]
+        closes=closes,
+        tenkan_period=settings["ichimoku_tenkan"],
+        kijun_period=settings["ichimoku_kijun"],
+        senkou_b_period=settings["ichimoku_senkou_b"],
+        displacement=settings["ichimoku_displacement"]
     )
 
     return {
@@ -219,13 +223,12 @@ def analyze_market(symbol, timeframe, candles):
 
     result["symbol"] = validated["symbol"]
     result["timeframe"] = validated["timeframe"]
-
     result["signal"] = "NOT_EVALUATED"
 
     result["note"] = (
-        "Indicators calculated successfully. "
-        "Trading signals are not enabled at this stage. "
-        "Candles must be closed and ordered from oldest to newest."
+        "Indicators calculated without generating trading signals. "
+        "Candles must be closed and ordered from oldest to newest. "
+        "At least 78 candles are required for the current Ichimoku cloud."
     )
 
     return result

@@ -1,17 +1,16 @@
-
 package com.tradingai.app
 
 import android.os.Bundle
+import android.widget.ImageView
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -29,24 +28,27 @@ fun TradingDashboard() {
 
     MaterialTheme {
         Scaffold { padding ->
-
             Column(
                 modifier = Modifier
                     .padding(padding)
                     .padding(20.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-
                 // fxizadi Brand Header
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
-                    Image(
-                        painter = painterResource(
-                            id = R.mipmap.ic_launcher
-                        ),
-                        contentDescription = "fxizadi logo",
+                    // Android ImageView can render the adaptive launcher icon.
+                    // Compose painterResource cannot reliably load AdaptiveIconDrawable.
+                    AndroidView(
+                        factory = { context ->
+                            ImageView(context).apply {
+                                setImageResource(R.mipmap.ic_launcher)
+                                scaleType = ImageView.ScaleType.FIT_CENTER
+                                contentDescription = "fxizadi logo"
+                            }
+                        },
                         modifier = Modifier.size(64.dp)
                     )
 
@@ -55,7 +57,6 @@ fun TradingDashboard() {
                             "fxizadi",
                             style = MaterialTheme.typography.headlineMedium
                         )
-
                         Text("SMART MARKET ANALYSIS")
                     }
                 }
@@ -80,10 +81,7 @@ fun TradingDashboard() {
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    listOf(
-                        "M1", "M5", "M15", "M30",
-                        "H1", "H4", "D1"
-                    ).forEach {
+                    listOf("M1", "M5", "M15", "M30", "H1", "H4", "D1").forEach {
                         FilterChip(
                             selected = timeframe == it,
                             onClick = { timeframe = it },

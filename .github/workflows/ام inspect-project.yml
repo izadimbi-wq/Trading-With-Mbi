@@ -29,3 +29,17 @@ jobs:
             -o -name "package.json" \
             -o -name "pubspec.yaml" \) \
             -print
+                      echo "===== ANDROID APP FILES ====="
+          find android-app -maxdepth 4 -type f | sort
+
+          echo "===== SETTINGS GRADLE ====="
+          cat android-app/settings.gradle.kts
+
+          echo "===== ROOT BUILD GRADLE ====="
+          cat android-app/build.gradle.kts
+
+          echo "===== APP BUILD GRADLE ====="
+          cat android-app/app/build.gradle.kts
+
+          echo "===== GRADLE WRAPPER CHECK ====="
+          ls -la android-app/gradle/wrapper/ 2>/dev/null || true

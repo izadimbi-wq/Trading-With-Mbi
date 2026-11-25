@@ -28,14 +28,17 @@ def _validate_prices(values, name="prices"):
 def ema(prices, period):
     prices = _validate_prices(prices)
 
-    if not isinstance(period, int) or isinstance(period, bool) or period < 1:
+    if (
+        not isinstance(period, int)
+        or isinstance(period, bool)
+        or period < 1
+    ):
         raise ValueError("Period must be a positive integer.")
 
     if len(prices) < period:
         return None
 
     multiplier = 2.0 / (period + 1)
-
     result = sum(prices[:period]) / period
 
     for price in prices[period:]:
@@ -50,7 +53,11 @@ def ema(prices, period):
 def rsi(prices, period=14):
     prices = _validate_prices(prices)
 
-    if not isinstance(period, int) or isinstance(period, bool) or period < 1:
+    if (
+        not isinstance(period, int)
+        or isinstance(period, bool)
+        or period < 1
+    ):
         raise ValueError("Period must be a positive integer.")
 
     if len(prices) < period + 1:
@@ -85,7 +92,9 @@ def rsi(prices, period=14):
 
     relative_strength = average_gain / average_loss
 
-    return 100.0 - (100.0 / (1.0 + relative_strength))
+    return 100.0 - (
+        100.0 / (1.0 + relative_strength)
+    )
 
 
 def atr(highs, lows, closes, period=14):
@@ -93,11 +102,25 @@ def atr(highs, lows, closes, period=14):
     lows = _validate_prices(lows, "lows")
     closes = _validate_prices(closes, "closes")
 
-    if not isinstance(period, int) or isinstance(period, bool) or period < 1:
+    if (
+        not isinstance(period, int)
+        or isinstance(period, bool)
+        or period < 1
+    ):
         raise ValueError("Period must be a positive integer.")
 
     if not (len(highs) == len(lows) == len(closes)):
         raise ValueError("OHLC arrays must have equal lengths.")
+
+    for index in range(len(closes)):
+        if highs[index] < lows[index]:
+            raise ValueError("High cannot be lower than low.")
+
+        if (
+            highs[index] < closes[index]
+            or lows[index] > closes[index]
+        ):
+            raise ValueError("Inconsistent OHLC values.")
 
     if len(closes) < period + 1:
         return None
@@ -105,15 +128,6 @@ def atr(highs, lows, closes, period=14):
     true_ranges = []
 
     for index in range(1, len(closes)):
-        if highs[index] < lows[index]:
-            raise ValueError("High cannot be lower than low.")
-
-        if (
-            highs[index] < max(closes[index], closes[index - 1])
-            or lows[index] > min(closes[index], closes[index - 1])
-        ):
-            raise ValueError("Inconsistent OHLC values.")
-
         true_range = max(
             highs[index] - lows[index],
             abs(highs[index] - closes[index - 1]),
@@ -131,19 +145,26 @@ def atr(highs, lows, closes, period=14):
 
     return result
 
+
 def macd(prices, fast=12, slow=26, signal=9):
     prices = _validate_prices(prices)
 
     periods = (fast, slow, signal)
 
     if any(
-        not isinstance(p, int) or isinstance(p, bool) or p < 1
+        not isinstance(p, int)
+        or isinstance(p, bool)
+        or p < 1
         for p in periods
     ):
-        raise ValueError("MACD periods must be positive integers.")
+        raise ValueError(
+            "MACD periods must be positive integers."
+        )
 
     if fast >= slow:
-        raise ValueError("Fast period must be smaller than slow period.")
+        raise ValueError(
+            "Fast period must be smaller than slow period."
+        )
 
     if len(prices) < slow + signal - 1:
         return None
@@ -154,16 +175,22 @@ def macd(prices, fast=12, slow=26, signal=9):
     fast_ema = sum(prices[:fast]) / fast
     slow_ema = sum(prices[:slow]) / slow
 
-    macd_values = []
-
-    for index in range(slow, len(prices)):
+    for price in prices[fast:slow]:
         fast_ema = (
-            prices[index] * fast_multiplier
+            price * fast_multiplier
+            + fast_ema * (1 - fast_multiplier)
+        )
+
+    macd_values = [fast_ema - slow_ema]
+
+    for price in prices[slow:]:
+        fast_ema = (
+            price * fast_multiplier
             + fast_ema * (1 - fast_multiplier)
         )
 
         slow_ema = (
-            prices[index] * slow_multiplier
+            price * slow_multiplier
             + slow_ema * (1 - slow_multiplier)
         )
 
@@ -172,7 +199,15 @@ def macd(prices, fast=12, slow=26, signal=9):
     if len(macd_values) < signal:
         return None
 
-    signal_line = ema(macd_values, signal)
+    signal_multiplier = 2.0 / (signal + 1)
+
+    signal_line = sum(macd_values[:signal]) / signal
+
+    for value in macd_values[signal:]:
+        signal_line = (
+            value * signal_multiplier
+            + signal_line * (1 - signal_multiplier)
+        )
 
     return {
         "macd": macd_values[-1],
@@ -192,7 +227,9 @@ def ichimoku(
     lows = _validate_prices(lows, "lows")
 
     if len(highs) != len(lows):
-        raise ValueError("High and low arrays must have equal lengths.")
+        raise ValueError(
+            "High and low arrays must have equal lengths."
+        )
 
     periods = (
         tenkan_period,
@@ -201,13 +238,22 @@ def ichimoku(
     )
 
     if any(
-        not isinstance(p, int) or isinstance(p, bool) or p < 1
+        not isinstance(p, int)
+        or isinstance(p, bool)
+        or p < 1
         for p in periods
     ):
-        raise ValueError("Ichimoku periods must be positive integers.")
+        raise ValueError(
+            "Ichimoku periods must be positive integers."
+        )
 
-    if any(h < l for h, l in zip(highs, lows)):
-        raise ValueError("High cannot be lower than low.")
+    if any(
+        high < low
+        for high, low in zip(highs, lows)
+    ):
+        raise ValueError(
+            "High cannot be lower than low."
+        )
 
     required = max(periods)
 
@@ -224,6 +270,7 @@ def ichimoku(
 
     tenkan = midpoint(tenkan_period)
     kijun = midpoint(kijun_period)
+
     senkou_a = (tenkan + kijun) / 2.0
     senkou_b = midpoint(senkou_b_period)
 

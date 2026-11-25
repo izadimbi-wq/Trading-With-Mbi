@@ -1,5 +1,5 @@
-from dataclasses import dataclass, asdict
-from math import floor
+from dataclasses import dataclass
+from math import floor, isfinite
 
 @dataclass
 class RiskRequest:
@@ -14,43 +14,21 @@ class RiskRequest:
     max_lot: float
 
 def calculate_position_size(req: RiskRequest) -> dict:
-    if req.balance <= 0 or not (0 < req.risk_percent <= 1):
-        return {"status": "REJECT", "reason": "Invalid balance or risk percentage."}
-    if req.entry_price <= 0 or req.stop_loss <= 0 or req.tick_size <= 0:
-        return {"status": "REJECT", "reason": "Invalid price or tick specification."}
-    if req.tick_value_per_lot <= 0 or req.min_lot <= 0 or req.lot_step <= 0:
-        return {"status": "REJECT", "reason": "Invalid broker contract specification."}
-
-    distance = abs(req.entry_price - req.stop_loss)
-    if distance == 0:
-        return {"status": "REJECT", "reason": "Stop loss must differ from entry."}
-
-    risk_budget = req.balance * req.risk_percent / 100.0
-    ticks = distance / req.tick_size
-    risk_per_lot = ticks * req.tick_value_per_lot
-    raw_lots = risk_budget / risk_per_lot
-
-    # Round DOWN to lot step. Never round upward to broker minimum.
-    stepped_lots = floor((raw_lots + 1e-12) / req.lot_step) * req.lot_step
-    stepped_lots = min(stepped_lots, req.max_lot)
-
-    if stepped_lots + 1e-12 < req.min_lot:
-        min_lot_risk = req.min_lot * risk_per_lot
-        return {
-            "status": "REJECT",
-            "reason": "Minimum broker lot would exceed the configured risk budget.",
-            "risk_budget": round(risk_budget, 8),
-            "raw_lots": round(raw_lots, 8),
-            "minimum_lot": req.min_lot,
-            "estimated_minimum_lot_risk": round(min_lot_risk, 8)
-        }
-
-    estimated_risk = stepped_lots * risk_per_lot
-    return {
-        "status": "ACCEPT_FOR_REVIEW",
-        "lots": round(stepped_lots, 8),
-        "risk_budget": round(risk_budget, 8),
-        "estimated_risk": round(estimated_risk, 8),
-        "stop_distance": round(distance, 8),
-        "note": "Revalidate tick value, spread, commission, slippage and margin with live broker data."
-    }
+    values=(req.balance,req.risk_percent,req.entry_price,req.stop_loss,req.tick_size,req.tick_value_per_lot,req.min_lot,req.lot_step,req.max_lot)
+    if any(isinstance(v,bool) or not isinstance(v,(int,float)) or not isfinite(v) for v in values):
+        return {"status":"REJECT","reason":"Invalid numeric input."}
+    if req.balance<=0 or not 0<req.risk_percent<=1:
+        return {"status":"REJECT","reason":"Risk per trade must be greater than zero and at most 1 percent."}
+    if min(req.entry_price,req.stop_loss,req.tick_size,req.tick_value_per_lot,req.min_lot,req.lot_step,req.max_lot)<=0:
+        return {"status":"REJECT","reason":"Invalid price or broker contract specification."}
+    if req.max_lot<req.min_lot:return {"status":"REJECT","reason":"Maximum lot is below minimum lot."}
+    distance=abs(req.entry_price-req.stop_loss)
+    if distance==0:return {"status":"REJECT","reason":"Stop loss must differ from entry."}
+    budget=req.balance*req.risk_percent/100
+    risk_per_lot=(distance/req.tick_size)*req.tick_value_per_lot
+    raw=budget/risk_per_lot
+    lots=min(floor((raw+1e-12)/req.lot_step)*req.lot_step,req.max_lot)
+    if lots+1e-12<req.min_lot:
+        return {"status":"REJECT","reason":"Minimum broker lot would exceed configured risk budget.","risk_budget":round(budget,8),"raw_lots":round(raw,8),"minimum_lot":req.min_lot,"estimated_minimum_lot_risk":round(req.min_lot*risk_per_lot,8)}
+    risk=lots*risk_per_lot
+    return {"status":"ACCEPT_FOR_REVIEW","lots":round(lots,8),"risk_budget":round(budget,8),"estimated_risk":round(risk,8),"stop_distance":round(distance,8),"note":"Estimated risk excludes spread, commission and slippage; validate live broker contract data."}

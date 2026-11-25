@@ -68,7 +68,6 @@ def rsi(prices, period=14):
 
     for index in range(1, len(prices)):
         change = prices[index] - prices[index - 1]
-
         gains.append(max(change, 0.0))
         losses.append(max(-change, 0.0))
 
@@ -196,11 +195,7 @@ def macd(prices, fast=12, slow=26, signal=9):
 
         macd_values.append(fast_ema - slow_ema)
 
-    if len(macd_values) < signal:
-        return None
-
     signal_multiplier = 2.0 / (signal + 1)
-
     signal_line = sum(macd_values[:signal]) / signal
 
     for value in macd_values[signal:]:
@@ -219,9 +214,11 @@ def macd(prices, fast=12, slow=26, signal=9):
 def ichimoku(
     highs,
     lows,
+    closes=None,
     tenkan_period=9,
     kijun_period=26,
-    senkou_b_period=52
+    senkou_b_period=52,
+    displacement=26
 ):
     highs = _validate_prices(highs, "highs")
     lows = _validate_prices(lows, "lows")
@@ -231,10 +228,19 @@ def ichimoku(
             "High and low arrays must have equal lengths."
         )
 
+    if closes is not None:
+        closes = _validate_prices(closes, "closes")
+
+        if len(closes) != len(highs):
+            raise ValueError(
+                "High, low and close arrays must have equal lengths."
+            )
+
     periods = (
         tenkan_period,
         kijun_period,
-        senkou_b_period
+        senkou_b_period,
+        displacement
     )
 
     if any(
@@ -255,34 +261,150 @@ def ichimoku(
             "High cannot be lower than low."
         )
 
-    required = max(periods)
+    required = max(
+        tenkan_period,
+        kijun_period,
+        senkou_b_period
+    )
 
     if len(highs) < required:
         return None
 
-    def midpoint(period):
-        recent_highs = highs[-period:]
-        recent_lows = lows[-period:]
+    def midpoint(period, end_index):
+        start_index = end_index - period + 1
+
+        if start_index < 0:
+            return None
+
+        period_highs = highs[start_index:end_index + 1]
+        period_lows = lows[start_index:end_index + 1]
 
         return (
-            max(recent_highs) + min(recent_lows)
+            max(period_highs) + min(period_lows)
         ) / 2.0
 
-    tenkan = midpoint(tenkan_period)
-    kijun = midpoint(kijun_period)
+    current_index = len(highs) - 1
+
+    tenkan = midpoint(
+        tenkan_period,
+        current_index
+    )
+
+    kijun = midpoint(
+        kijun_period,
+        current_index
+    )
 
     senkou_a = (tenkan + kijun) / 2.0
-    senkou_b = midpoint(senkou_b_period)
+
+    senkou_b = midpoint(
+        senkou_b_period,
+        current_index
+    )
+
+    cloud_index = current_index - displacement
+
+    cloud_at_current = None
+    chikou_reference = None
+    chikou_position = "UNAVAILABLE"
+    price_vs_cloud = "UNAVAILABLE"
+
+    if cloud_index >= 0:
+        historical_tenkan = midpoint(
+            tenkan_period,
+            cloud_index
+        )
+
+        historical_kijun = midpoint(
+            kijun_period,
+            cloud_index
+        )
+
+        historical_senkou_b = midpoint(
+            senkou_b_period,
+            cloud_index
+        )
+
+        if (
+            historical_tenkan is not None
+            and historical_kijun is not None
+            and historical_senkou_b is not None
+        ):
+            historical_senkou_a = (
+                historical_tenkan + historical_kijun
+            ) / 2.0
+
+            cloud_top = max(
+                historical_senkou_a,
+                historical_senkou_b
+            )
+
+            cloud_bottom = min(
+                historical_senkou_a,
+                historical_senkou_b
+            )
+
+            cloud_at_current = {
+                "senkou_span_a": historical_senkou_a,
+                "senkou_span_b": historical_senkou_b,
+                "top": cloud_top,
+                "bottom": cloud_bottom
+            }
+
+            if closes is not None:
+                current_close = closes[current_index]
+
+                if current_close > cloud_top:
+                    price_vs_cloud = "ABOVE"
+                elif current_close < cloud_bottom:
+                    price_vs_cloud = "BELOW"
+                else:
+                    price_vs_cloud = "INSIDE"
+
+    if closes is not None and cloud_index >= 0:
+        chikou_reference = closes[cloud_index]
+        current_close = closes[current_index]
+
+        if current_close > chikou_reference:
+            chikou_position = "ABOVE"
+        elif current_close < chikou_reference:
+            chikou_position = "BELOW"
+        else:
+            chikou_position = "EQUAL"
+
+    if senkou_a > senkou_b:
+        projected_cloud_bias = "BULLISH"
+    elif senkou_a < senkou_b:
+        projected_cloud_bias = "BEARISH"
+    else:
+        projected_cloud_bias = "NEUTRAL"
+
+    if tenkan > kijun:
+        tenkan_kijun_bias = "BULLISH"
+    elif tenkan < kijun:
+        tenkan_kijun_bias = "BEARISH"
+    else:
+        tenkan_kijun_bias = "NEUTRAL"
 
     return {
         "tenkan_sen": tenkan,
         "kijun_sen": kijun,
         "senkou_span_a": senkou_a,
         "senkou_span_b": senkou_b,
-        "chikou_reference": None,
+        "projected_cloud_bias": projected_cloud_bias,
+        "tenkan_kijun_bias": tenkan_kijun_bias,
+        "cloud_at_current": cloud_at_current,
+        "price_vs_cloud": price_vs_cloud,
+        "chikou_value": (
+            closes[-1] if closes is not None else None
+        ),
+        "chikou_reference": chikou_reference,
+        "chikou_position": chikou_position,
+        "displacement": displacement,
         "note": (
-            "Senkou spans are calculated at the current candle "
-            "and must be plotted 26 periods forward. "
-            "Chikou requires historical alignment."
+            "Current cloud uses Senkou values calculated "
+            "displacement candles earlier. Projected spans "
+            "are calculated from the latest candle. "
+            "No future candle data is used."
         )
     }

@@ -9,6 +9,8 @@ from technical_analysis.indicators import (
     ichimoku
 )
 
+from technical_analysis.signal_engine import generate_signal
+
 
 SUPPORTED_SYMBOLS = {
     "XAUUSD",
@@ -223,12 +225,32 @@ def analyze_market(symbol, timeframe, candles):
 
     result["symbol"] = validated["symbol"]
     result["timeframe"] = validated["timeframe"]
-    result["signal"] = "NOT_EVALUATED"
+
+    if result["status"] == "INSUFFICIENT_DATA":
+        result["signal"] = "NO TRADE"
+        result["signal_status"] = "INSUFFICIENT_DATA"
+        result["signal_reason"] = (
+            "Not enough closed candles for reliable analysis."
+        )
+        result["note"] = (
+            "No trading signal is generated because "
+            "the available market data is insufficient."
+        )
+        return result
+
+    signal_result = generate_signal(
+        result["indicators"]
+    )
+
+    result["signal"] = signal_result["signal"]
+    result["signal_status"] = signal_result["status"]
+    result["signal_reason"] = signal_result["reason"]
+    result["signal_details"] = signal_result
 
     result["note"] = (
-        "Indicators calculated without generating trading signals. "
-        "Candles must be closed and ordered from oldest to newest. "
-        "At least 78 candles are required for the current Ichimoku cloud."
+        "Indicators and signal engine have been evaluated. "
+        "Only closed candles are accepted. "
+        "No trading order is executed."
     )
 
     return result

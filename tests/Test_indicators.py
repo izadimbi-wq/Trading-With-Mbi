@@ -57,3 +57,34 @@ def test_invalid_period():
 def test_invalid_prices():
     with pytest.raises(ValueError):
         ema([10, -1, 12], 2)
+
+from technical_analysis.indicators import macd
+
+
+def test_macd_calculation():
+    prices = [float(i) for i in range(1, 101)]
+
+    result = macd(prices)
+
+    assert result is not None
+    assert "macd" in result
+    assert "signal" in result
+    assert "histogram" in result
+
+    assert result["macd"] > 0
+    assert result["histogram"] == pytest.approx(
+        result["macd"] - result["signal"]
+    )
+
+
+def test_macd_insufficient_data():
+    prices = [float(i) for i in range(1, 30)]
+
+    assert macd(prices) is None
+
+
+def test_macd_invalid_periods():
+    prices = [float(i) for i in range(1, 101)]
+
+    with pytest.raises(ValueError):
+        macd(prices, fast=26, slow=12)

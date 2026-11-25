@@ -24,7 +24,7 @@ def sample_candles():
     ]
 
 
-def long_sample_candles(count=60):
+def long_sample_candles(count=90):
     candles = []
 
     for i in range(count):
@@ -115,20 +115,56 @@ def test_full_market_analysis():
     assert indicators["rsi"]["value"] is not None
     assert indicators["atr"]["value"] > 0
     assert indicators["macd"] is not None
-    assert indicators["ichimoku"] is not None
 
-    assert result["signal"] == "NOT_EVALUATED"
+    ichimoku_result = indicators["ichimoku"]
+
+    assert ichimoku_result is not None
+    assert ichimoku_result["cloud_at_current"] is not None
+
+    assert ichimoku_result["price_vs_cloud"] in (
+        "ABOVE",
+        "BELOW",
+        "INSIDE"
+    )
+
+    assert ichimoku_result["chikou_reference"] is not None
+
+    assert ichimoku_result["chikou_position"] in (
+        "ABOVE",
+        "BELOW",
+        "EQUAL"
+    )
+
+    assert result["signal"] in (
+        "BUY",
+        "SELL",
+        "NO TRADE"
+    )
+
+    assert result["signal_status"] in (
+        "SIGNAL_GENERATED",
+        "NO_VALID_SETUP",
+        "INVALID_INDICATOR_DATA",
+        "INSUFFICIENT_DATA"
+    )
+
+    assert isinstance(result["signal_details"], dict)
+    assert result["signal_details"]["signal"] == result["signal"]
 
 
 def test_insufficient_market_data():
     result = analyze_market(
         "EURUSD",
         "M5",
-        long_sample_candles(30)
+        long_sample_candles(77)
     )
 
     assert result["status"] == "INSUFFICIENT_DATA"
-    assert result["required_candles"] == 52
+    assert result["required_candles"] == 78
+    assert result["available_candles"] == 77
+
+    assert result["signal"] == "NO TRADE"
+    assert result["signal_status"] == "INSUFFICIENT_DATA"
 
 
 def test_open_candle_is_rejected():
@@ -141,4 +177,3 @@ def test_open_candle_is_rejected():
             "M5",
             candles
         )
-

@@ -1,49 +1,78 @@
 
-name: Extract Trading AI Starter Package
+name: Extract Trading With Mbi Backend Update
 
 on:
   workflow_dispatch:
   push:
+    branches:
+      - main
     paths:
-      - 'TradingAI_Starter_Package.zip'
-      - '.github/workflows/extract-package.yml'
+      - 'Trading-With-Mbi-Backend-Update.zip'
+      - '.github/workflows/main.yml'
 
 permissions:
   contents: write
 
 jobs:
-  extract:
+  extract-backend:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Extract ZIP package
+      - name: Verify update archive
+        shell: bash
         run: |
-          mkdir -p extracted
+          set -euo pipefail
+          PACKAGE="Trading-With-Mbi-Backend-Update.zip"
+          test -f "$PACKAGE"
+          unzip -tq "$PACKAGE"
+          unzip -Z1 "$PACKAGE" | grep -Eq '(^|/)backend/'
 
-          unzip -q TradingAI_Starter_Package.zip -d extracted
+      - name: Extract backend and tests only
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/trading-mbi-update
+          unzip -q "Trading-With-Mbi-Backend-Update.zip" -d /tmp/trading-mbi-update
 
-          if [ -d extracted/TradingAI_Starter ]; then
-            cp -a extracted/TradingAI_Starter/. .
-          else
-            cp -a extracted/. .
+          SOURCE="/tmp/trading-mbi-update"
+          if [ -d "$SOURCE/Trading-With-Mbi-Backend-Update" ]; then
+            SOURCE="$SOURCE/Trading-With-Mbi-Backend-Update"
           fi
 
-          rm -rf extracted
+          if [ ! -d "$SOURCE/backend" ]; then
+            echo "Expected backend directory was not found."
+            find /tmp/trading-mbi-update -maxdepth 3 -type d -print
+            exit 1
+          fi
 
-      - name: Commit extracted files
+          mkdir -p backend
+          rsync -a "$SOURCE/backend/" backend/
+
+          if [ -d "$SOURCE/tests" ]; then
+            mkdir -p tests
+            rsync -a "$SOURCE/tests/" tests/
+          fi
+
+          echo "Backend extracted. Android assets were not touched."
+
+      - name: Commit backend update
+        shell: bash
         run: |
+          set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A -- backend
 
-          git add -A
-
-          if ! git diff --cached --quiet; then
-            git commit -m "Extract Trading AI Starter Package"
-            git push
+          if [ -d tests ]; then
+            git add -A -- tests
           fi
 
-
-
+          if ! git diff --cached --quiet; then
+            git commit -m "Apply Trading With Mbi backend update"
+            git push
+          else
+            echo "No backend changes to commit."
+          fi

@@ -180,3 +180,62 @@ def macd(prices, fast=12, slow=26, signal=9):
         "histogram": macd_values[-1] - signal_line
     }
 
+
+def ichimoku(
+    highs,
+    lows,
+    tenkan_period=9,
+    kijun_period=26,
+    senkou_b_period=52
+):
+    highs = _validate_prices(highs, "highs")
+    lows = _validate_prices(lows, "lows")
+
+    if len(highs) != len(lows):
+        raise ValueError("High and low arrays must have equal lengths.")
+
+    periods = (
+        tenkan_period,
+        kijun_period,
+        senkou_b_period
+    )
+
+    if any(
+        not isinstance(p, int) or isinstance(p, bool) or p < 1
+        for p in periods
+    ):
+        raise ValueError("Ichimoku periods must be positive integers.")
+
+    if any(h < l for h, l in zip(highs, lows)):
+        raise ValueError("High cannot be lower than low.")
+
+    required = max(periods)
+
+    if len(highs) < required:
+        return None
+
+    def midpoint(period):
+        recent_highs = highs[-period:]
+        recent_lows = lows[-period:]
+
+        return (
+            max(recent_highs) + min(recent_lows)
+        ) / 2.0
+
+    tenkan = midpoint(tenkan_period)
+    kijun = midpoint(kijun_period)
+    senkou_a = (tenkan + kijun) / 2.0
+    senkou_b = midpoint(senkou_b_period)
+
+    return {
+        "tenkan_sen": tenkan,
+        "kijun_sen": kijun,
+        "senkou_span_a": senkou_a,
+        "senkou_span_b": senkou_b,
+        "chikou_reference": None,
+        "note": (
+            "Senkou spans are calculated at the current candle "
+            "and must be plotted 26 periods forward. "
+            "Chikou requires historical alignment."
+        )
+    }

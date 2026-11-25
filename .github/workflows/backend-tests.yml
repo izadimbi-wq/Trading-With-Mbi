@@ -1,5 +1,4 @@
 
-
 name: Backend Tests
 
 on:
@@ -48,3 +47,38 @@ jobs:
       - name: Run Unit Tests
         run: |
           python -m pytest -q tests
+
+      - name: Start Backend API
+        working-directory: backend/app
+        env:
+          PYTHONPATH: .
+        run: |
+          python -m uvicorn main:app --host 127.0.0.1 --port 8000 > /tmp/backend.log 2>&1 &
+          echo $! > /tmp/backend.pid
+
+          for i in $(seq 1 20); do
+            if curl -fsS http://127.0.0.1:8000/health; then
+              exit 0
+            fi
+            sleep 1
+          done
+
+          cat /tmp/backend.log
+          exit 1
+
+      - name: Test Live Market Data
+        run: |
+          echo "===== XAUUSD TICK ====="
+          curl -fsS http://127.0.0.1:8000/api/v1/market/XAUUSD/tick
+
+          echo
+          echo "===== EURUSD TICK ====="
+          curl -fsS http://127.0.0.1:8000/api/v1/market/EURUSD/tick
+
+          echo
+          echo "===== XAGUSD TICK ====="
+          curl -fsS http://127.0.0.1:8000/api/v1/market/XAGUSD/tick
+
+          echo
+          echo "===== XAUUSD 5M CANDLES ====="
+          curl -fsS "http://127.0.0.1:8000/api/v1/market/XAUUSD/ohlc?interval=5m&limit=10"

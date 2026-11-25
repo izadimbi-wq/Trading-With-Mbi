@@ -1,4 +1,14 @@
+
 from math import isfinite
+
+from technical_analysis.indicators import (
+    ema,
+    rsi,
+    atr,
+    macd,
+    ichimoku
+)
+
 
 SUPPORTED_SYMBOLS = {
     "XAUUSD",
@@ -30,11 +40,7 @@ DEFAULT_SETTINGS = {
 }
 
 
-def validate_market_input(
-    symbol,
-    timeframe,
-    candles
-):
+def validate_market_input(symbol, timeframe, candles):
     symbol = str(symbol).upper()
     timeframe = str(timeframe).upper()
 
@@ -66,6 +72,11 @@ def validate_market_input(
         if not required_fields.issubset(candle):
             raise ValueError(
                 f"Incomplete candle at index {index}."
+            )
+
+        if candle.get("isOpen") is True:
+            raise ValueError(
+                "Open candles must be excluded from analysis."
             )
 
         for field in required_fields:
@@ -107,3 +118,114 @@ def validate_market_input(
         "timeframe": timeframe,
         "candles": candles
     }
+
+
+def calculate_indicators(candles):
+    if not isinstance(candles, list) or not candles:
+        raise ValueError("Candles must be a non-empty list.")
+
+    settings = DEFAULT_SETTINGS
+
+    closes = [candle["close"] for candle in candles]
+    highs = [candle["high"] for candle in candles]
+    lows = [candle["low"] for candle in candles]
+
+    required_candles = max(
+        settings["ema_slow"],
+        settings["rsi_period"] + 1,
+        settings["atr_period"] + 1,
+        settings["macd_slow"] + settings["macd_signal"] - 1,
+        settings["ichimoku_senkou_b"]
+    )
+
+    if len(candles) < required_candles:
+        return {
+            "status": "INSUFFICIENT_DATA",
+            "required_candles": required_candles,
+            "available_candles": len(candles)
+        }
+
+    ema_fast = ema(
+        closes,
+        settings["ema_fast"]
+    )
+
+    ema_slow = ema(
+        closes,
+        settings["ema_slow"]
+    )
+
+    rsi_value = rsi(
+        closes,
+        settings["rsi_period"]
+    )
+
+    atr_value = atr(
+        highs,
+        lows,
+        closes,
+        settings["atr_period"]
+    )
+
+    macd_value = macd(
+        closes,
+        settings["macd_fast"],
+        settings["macd_slow"],
+        settings["macd_signal"]
+    )
+
+    ichimoku_value = ichimoku(
+        highs,
+        lows,
+        settings["ichimoku_tenkan"],
+        settings["ichimoku_kijun"],
+        settings["ichimoku_senkou_b"]
+    )
+
+    return {
+        "status": "CALCULATED",
+        "candles_used": len(candles),
+        "indicators": {
+            "ema": {
+                "fast_period": settings["ema_fast"],
+                "fast": ema_fast,
+                "slow_period": settings["ema_slow"],
+                "slow": ema_slow
+            },
+            "rsi": {
+                "period": settings["rsi_period"],
+                "value": rsi_value
+            },
+            "atr": {
+                "period": settings["atr_period"],
+                "value": atr_value
+            },
+            "macd": macd_value,
+            "ichimoku": ichimoku_value
+        }
+    }
+
+
+def analyze_market(symbol, timeframe, candles):
+    validated = validate_market_input(
+        symbol,
+        timeframe,
+        candles
+    )
+
+    result = calculate_indicators(
+        validated["candles"]
+    )
+
+    result["symbol"] = validated["symbol"]
+    result["timeframe"] = validated["timeframe"]
+
+    result["signal"] = "NOT_EVALUATED"
+
+    result["note"] = (
+        "Indicators calculated successfully. "
+        "Trading signals are not enabled at this stage. "
+        "Candles must be closed and ordered from oldest to newest."
+    )
+
+    return result

@@ -1,0 +1,46 @@
+
+name: Extract Trading AI Starter Package
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'TradingAI_Starter_Package.zip'
+      - '.github/workflows/extract-package.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Extract ZIP package
+        run: |
+          mkdir -p extracted
+
+          unzip -q TradingAI_Starter_Package.zip -d extracted
+
+          if [ -d extracted/TradingAI_Starter ]; then
+            cp -a extracted/TradingAI_Starter/. .
+          else
+            cp -a extracted/. .
+          fi
+
+          rm -rf extracted
+
+      - name: Commit extracted files
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add -A
+
+          if ! git diff --cached --quiet; then
+            git commit -m "Extract Trading AI Starter Package"
+            git push
+          fi

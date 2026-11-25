@@ -8,11 +8,7 @@ from urllib.request import Request, urlopen
 
 BASE_URL = "https://biquote.io/api"
 
-ALLOWED_SYMBOLS = {
-    "XAUUSD",
-    "EURUSD",
-    "XAGUSD",
-}
+ALLOWED_SYMBOLS = {"XAUUSD", "EURUSD", "XAGUSD"}
 
 ALLOWED_INTERVALS = {
     "1m", "5m", "15m", "30m",
@@ -29,13 +25,25 @@ def _get_json(url: str) -> dict:
         url,
         headers={
             "Accept": "application/json",
-            "User-Agent": "Trading-With-Mbi/0.1"
+            "User-Agent": "Trading-With-Mbi/0.2"
         }
     )
 
     try:
         with urlopen(request, timeout=10) as response:
-            return json.loads(response.read().decode("utf-8"))
+            result = json.loads(
+                response.read().decode("utf-8")
+            )
+
+        if not isinstance(result, dict):
+            raise MarketDataError(
+                "Invalid market data response format."
+            )
+
+        return result
+
+    except MarketDataError:
+        raise
 
     except (HTTPError, URLError, TimeoutError) as exc:
         raise MarketDataError(
@@ -46,6 +54,15 @@ def _get_json(url: str) -> dict:
         raise MarketDataError(
             "Invalid market data response."
         ) from exc
+
+
+def _valid_number(value) -> bool:
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+        and value > 0
+    )
 
 
 def get_tick(symbol: str) -> dict:
@@ -64,23 +81,26 @@ def get_tick(symbol: str) -> dict:
         raise MarketDataError("Incomplete tick data.")
 
     for key in ("bid", "ask", "mid"):
-        value = data[key]
+        if not _valid_number(data[key]):
+            raise MarketDataError(
+                f"Invalid {key} price."
+            )
 
-        if not isinstance(value, (int, float)):
-            raise MarketDataError("Invalid price value.")
+    bid = data["bid"]
+    ask = data["ask"]
+    mid = data["mid"]
 
-        if not math.isfinite(value) or value <= 0:
-            raise MarketDataError("Invalid price value.")
-
-    if data["ask"] < data["bid"]:
-        raise MarketDataError("Invalid bid/ask relationship.")
+    if ask < bid or not bid <= mid <= ask:
+        raise MarketDataError(
+            "Invalid bid/ask/mid relationship."
+        )
 
     return {
         "symbol": symbol,
-        "bid": data["bid"],
-        "ask": data["ask"],
-        "mid": data["mid"],
-        "spread": data["ask"] - data["bid"],
+        "bid": bid,
+        "ask": ask,
+        "mid": mid,
+        "spread": ask - bid,
         "timestamp": data["timestamp"],
         "source": data.get("source"),
         "provider": "biquote",
@@ -107,7 +127,11 @@ def get_ohlc(
     if interval not in ALLOWED_INTERVALS:
         raise MarketDataError("Unsupported timeframe.")
 
-    if not 1 <= limit <= 1000:
+    if (
+        isinstance(limit, bool)
+        or not isinstance(limit, int)
+        or not 1 <= limit <= 1000
+    ):
         raise MarketDataError("Invalid candle limit.")
 
     params = urlencode({
@@ -124,13 +148,45 @@ def get_ohlc(
     if not isinstance(bars, list):
         raise MarketDataError("Invalid candle response.")
 
+    validated_bars = []
+
+    for bar in bars:
+        if not isinstance(bar, dict):
+            raise MarketDataError("Invalid candle format.")
+
+        required = ("open", "high", "low", "close")
+
+        if not all(key in bar for key in required):
+            raise MarketDataError("Incomplete candle data.")
+
+        for key in required:
+            if not _valid_number(bar[key]):
+                raise MarketDataError(
+                    f"Invalid candle {key} value."
+                )
+
+        open_price = bar["open"]
+        high_price = bar["high"]
+        low_price = bar["low"]
+        close_price = bar["close"]
+
+        if (
+            high_price < max(open_price, close_price)
+            or low_price > min(open_price, close_price)
+            or high_price < low_price
+        ):
+            raise MarketDataError(
+                "Inconsistent OHLC candle."
+            )
+
+        validated_bars.append(bar)
+
     return {
         "symbol": symbol,
         "interval": interval,
         "provider": "biquote",
-        "bars": bars,
+        "bars": validated_bars,
         "received_at": datetime.now(
             timezone.utc
         ).isoformat()
     }
-

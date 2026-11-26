@@ -7,14 +7,17 @@ import androidx.activity.compose.setContent
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -28,18 +31,7 @@ import java.net.URL
 import java.util.Locale
 
 private const val API_BASE = "https://trading-with-mbi-3.onrender.com"
-
-// Confirmed account profile: USD account, $50 balance, maximum 1% risk per trade.
-private const val ACCOUNT_BALANCE_USD = 50.0
 private const val ACCOUNT_RISK_PERCENT = 1.0
-
-// Provisional XAUUSD contract assumptions. Verify against the exact MT4 symbol specification.
-private val XAUUSD_CONTRACT = JSONObject()
-    .put("tick_size", 0.01)
-    .put("tick_value_per_lot", 1.0)
-    .put("min_lot", 0.01)
-    .put("lot_step", 0.01)
-    .put("max_lot", 100.0)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -69,26 +61,40 @@ private data class ScreenState(
 
 @Composable
 private fun TradingDashboard() {
-    var symbol by remember { mutableStateOf("XAUUSD") }
-    var timeframe by remember { mutableStateOf("5m") }
+    var symbol by rememberSaveable { mutableStateOf("XAUUSD") }
+    var timeframe by rememberSaveable { mutableStateOf("5m") }
+    var balanceText by rememberSaveable { mutableStateOf("50") }
     var refresh by remember { mutableIntStateOf(0) }
     var state by remember { mutableStateOf(ScreenState()) }
 
-    LaunchedEffect(symbol, timeframe, refresh) {
+    val balance = balanceText.trim().replace(',', '.').toDoubleOrNull()
+    val validBalance = balance != null && balance.isFinite() && balance > 0.0
+
+    LaunchedEffect(symbol, timeframe, refresh, balanceText) {
         while (isActive) {
-            try {
-                state = state.copy(loading = state.quote == null, error = null)
-                val newState = withContext(Dispatchers.IO) {
-                    loadMarket(symbol, timeframe)
-                }
-                state = newState
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
+            if (!validBalance) {
                 state = state.copy(
                     loading = false,
-                    error = e.message ?: "خطای دریافت اطلاعات"
+                    analysis = JSONObject()
+                        .put("signal", "NO TRADE")
+                        .put("signal_status", "INVALID_ACCOUNT_BALANCE")
+                        .put("signal_reason", "موجودی باید عددی بزرگ‌تر از صفر باشد.")
                 )
+            } else {
+                try {
+                    state = state.copy(loading = state.quote == null, error = null)
+                    val newState = withContext(Dispatchers.IO) {
+                        loadMarket(symbol, timeframe, balance!!)
+                    }
+                    state = newState
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    state = state.copy(
+                        loading = false,
+                        error = e.message ?: "خطای دریافت اطلاعات"
+                    )
+                }
             }
             delay(5000)
         }
@@ -107,6 +113,39 @@ private fun TradingDashboard() {
                 Button(onClick = { refresh++ }) { Text("بروزرسانی") }
             }
             HorizontalDivider()
+
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("مدیریت سرمایه", style = MaterialTheme.typography.titleLarge)
+                    Text("موجودی حساب (دلار آمریکا)")
+                    OutlinedTextField(
+                        value = balanceText,
+                        onValueChange = { input ->
+                            if (input.length <= 12 && input.all { it.isDigit() || it == '.' || it == ',' }) {
+                                balanceText = input
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        isError = !validBalance,
+                        suffix = { Text("USD") },
+                        supportingText = {
+                            Text(
+                                if (validBalance) "ریسک هر معامله: ۱٪  •  بودجه ریسک: $${
+                                    String.format(Locale.US, "%.2f", balance!! * ACCOUNT_RISK_PERCENT / 100.0)
+                                }"
+                                else "موجودی معتبر وارد کنید؛ تحلیل تا آن زمان انجام نمی‌شود."
+                            )
+                        }
+                    )
+                    Text(
+                        "با تغییر موجودی، تحلیل و محاسبات ریسک با مقدار جدید تکرار می‌شود.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+            }
+
             Text("نماد")
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 listOf("XAUUSD", "EURUSD", "XAGUSD").forEach {
@@ -192,9 +231,17 @@ private fun TradingDashboard() {
 
                         a.optJSONObject("account_risk_profile")?.let { risk ->
                             Text("مدیریت سرمایه", style = MaterialTheme.typography.titleMedium)
-                            RowValue("موجودی حساب", "$" + risk.optString("balance_usd", "50"))
+                            RowValue("موجودی حساب", "$" + risk.optString("balance_usd", balanceText))
                             RowValue("ریسک هر معامله", risk.optString("risk_percent", "1") + "%")
-                            RowValue("بودجه ریسک", "$" + risk.optString("risk_budget_usd", "0.50"))
+                            RowValue("بودجه ریسک", "$" + risk.optString("risk_budget_usd", "—"))
+                        }
+                        a.optJSONObject("contract_profile")?.let { profile ->
+                            if (profile.optString("status") == "UNVERIFIED") {
+                                Text(
+                                    "مشخصات قرارداد بروکر تأیید نشده است؛ محاسبه حجم و طرح معامله غیرفعال می‌ماند.",
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                            }
                         }
                         a.optJSONObject("trade_plan")?.let { plan ->
                             RowValue("وضعیت برنامه معامله", plan.optString("status", "نامشخص"))
@@ -282,14 +329,12 @@ private fun timeframeCode(interval: String) = when (interval) {
     "1h" -> "H1"; "4h" -> "H4"; "1d" -> "D1"; else -> "M5"
 }
 
-private fun loadMarket(symbol: String, timeframe: String): ScreenState {
+private fun loadMarket(symbol: String, timeframe: String, accountBalance: Double): ScreenState {
     var quote: Quote? = null
     var candles: List<Candle> = emptyList()
     var analysis: JSONObject? = null
     val errors = mutableListOf<String>()
 
-    // 1) Fetch live quote. Quote freshness is displayed, but it does not gate
-    // closed-candle technical analysis.
     try {
         val tick = getJson("$API_BASE/api/v1/market/$symbol/tick")
         val bid = tick.optDouble("bid", Double.NaN)
@@ -310,7 +355,6 @@ private fun loadMarket(symbol: String, timeframe: String): ScreenState {
         errors.add("قیمت: ${e.message ?: "خطای دریافت"}")
     }
 
-    // 2) Fetch and validate closed candles.
     val requestCandles = JSONArray()
     try {
         val response = getJson("$API_BASE/api/v1/market/$symbol/ohlc?interval=$timeframe&limit=100")
@@ -323,7 +367,6 @@ private fun loadMarket(symbol: String, timeframe: String): ScreenState {
         for (i in 0 until bars.length()) {
             val bar = bars.optJSONObject(i) ?: continue
             if (bar.optBoolean("isOpen", bar.optBoolean("is_open", false))) continue
-
             val o = bar.optDouble("open", Double.NaN)
             val h = bar.optDouble("high", Double.NaN)
             val l = bar.optDouble("low", Double.NaN)
@@ -342,19 +385,16 @@ private fun loadMarket(symbol: String, timeframe: String): ScreenState {
         errors.add("کندل: ${e.message ?: "خطای دریافت"}")
     }
 
-    // 3) Always submit available closed candles to the analysis endpoint.
-    // A missing/stale tick must not block candle-based indicators.
     if (requestCandles.length() > 0) {
         try {
             val payload = JSONObject()
                 .put("symbol", symbol)
                 .put("timeframe", timeframeCode(timeframe))
                 .put("candles", requestCandles)
-                .put("balance", ACCOUNT_BALANCE_USD)
+                .put("balance", accountBalance)
                 .put("risk_percent", ACCOUNT_RISK_PERCENT)
-
-            if (symbol == "XAUUSD") payload.put("contract", JSONObject(XAUUSD_CONTRACT.toString()))
-
+            // No broker contract constants are sent: Alpari Standard MT4
+            // specifications must be verified from the live symbol properties.
             analysis = postJson("$API_BASE/api/v1/analysis", payload)
         } catch (e: Exception) {
             errors.add("تحلیل: ${e.message ?: "خطای تحلیل"}")

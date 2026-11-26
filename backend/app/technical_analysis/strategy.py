@@ -1,3 +1,4 @@
+
 from math import isfinite
 
 from .indicators import ema, rsi, atr, macd, ichimoku
@@ -21,8 +22,6 @@ SETTINGS = {
     "displacement": 26,
 }
 
-# Broad sanity bands catch candles belonging to a different instrument.
-# These are validation guards, not trading targets or price forecasts.
 SYMBOL_PRICE_BANDS = {
     "XAUUSD": (100.0, 100000.0),
     "EURUSD": (0.1, 10.0),
@@ -54,6 +53,7 @@ def validate_market_input(symbol, timeframe, candles):
             raise ValueError("Open candles must be excluded.")
 
         values = [candle[key] for key in required]
+
         if any(
             isinstance(value, bool)
             or not isinstance(value, (int, float))
@@ -76,11 +76,16 @@ def validate_market_input(symbol, timeframe, candles):
         ):
             raise ValueError(f"Invalid OHLC candle {idx}.")
 
-    return {"symbol": symbol, "timeframe": timeframe, "candles": candles}
+    return {
+        "symbol": symbol,
+        "timeframe": timeframe,
+        "candles": candles,
+    }
 
 
 def calculate_indicators(candles):
     settings = SETTINGS
+
     closes = [item["close"] for item in candles]
     highs = [item["high"] for item in candles]
     lows = [item["low"] for item in candles]
@@ -147,7 +152,9 @@ def calculate_indicators(candles):
 def analyze_market(symbol, timeframe, candles, account=None, contract=None):
     validated = validate_market_input(symbol, timeframe, candles)
     data = validated["candles"]
+
     result = calculate_indicators(data)
+
     result.update({
         "symbol": validated["symbol"],
         "timeframe": validated["timeframe"],
@@ -156,8 +163,11 @@ def analyze_market(symbol, timeframe, candles, account=None, contract=None):
     if result["status"] != "CALCULATED":
         result.update({
             "signal": "NO TRADE",
+            "technical_signal": "NO TRADE",
             "signal_status": "INSUFFICIENT_DATA",
             "signal_reason": "Not enough closed candles.",
+            "trade_status": "NOT_EVALUATED",
+            "trade_status_reason": "Insufficient candle history.",
             "trade_plan": {
                 "status": "UNAVAILABLE",
                 "reason": "Insufficient candle history.",
@@ -168,20 +178,27 @@ def analyze_market(symbol, timeframe, candles, account=None, contract=None):
     indicators = result["indicators"]
     signal = generate_signal(indicators)
 
+    technical_signal = signal["signal"]
+
     result.update({
-        "signal": signal["signal"],
+        "signal": technical_signal,
+        "technical_signal": technical_signal,
         "signal_status": signal["status"],
         "signal_reason": signal["reason"],
         "signal_details": signal,
         "trend": (
-            "BULLISH" if indicators["ema"]["fast"] > indicators["ema"]["slow"]
-            else "BEARISH" if indicators["ema"]["fast"] < indicators["ema"]["slow"]
+            "BULLISH"
+            if indicators["ema"]["fast"] > indicators["ema"]["slow"]
+            else "BEARISH"
+            if indicators["ema"]["fast"] < indicators["ema"]["slow"]
             else "NEUTRAL"
         ),
         "support_resistance": support_resistance(
             data, indicators["atr"]["value"]
         ),
-        "pullback": pullback_zone(data, indicators["atr"]["value"]),
+        "pullback": pullback_zone(
+            data, indicators["atr"]["value"]
+        ),
         "entry_price": data[-1]["close"],
         "note": (
             "Closed-candle analysis only. No order is sent. "
@@ -191,59 +208,68 @@ def analyze_market(symbol, timeframe, candles, account=None, contract=None):
 
     result["trade_plan"] = {"status": "NOT_REQUESTED"}
 
-    if signal["signal"] in ("BUY", "SELL"):
-        if account is None:
-            result["signal"] = "NO TRADE"
-            result["signal_status"] = "RISK_PROFILE_MISSING"
-            result["signal_reason"] = (
-                "Account balance and risk settings are required."
-            )
-            result["trade_plan"] = {
-                "status": "UNAVAILABLE",
-                "reason": "Account risk profile missing.",
-            }
+    if technical_signal not in ("BUY", "SELL"):
+        result["trade_status"] = "NO_SETUP"
+        result["trade_status_reason"] = signal["reason"]
+        return result
 
-        elif contract is None:
-            result["signal"] = "NO TRADE"
-            result["signal_status"] = "CONTRACT_UNVERIFIED"
-            result["signal_reason"] = (
-                "Technical setup detected, but trading is blocked until "
-                "live broker contract specifications are verified."
-            )
-            result["trade_plan"] = {
-                "status": "UNAVAILABLE",
-                "reason": (
-                    "Verify tick size, tick value per lot, minimum lot, "
-                    "lot step and maximum lot in MT4."
-                ),
-            }
+    if account is None:
+        result["trade_status"] = "BLOCKED_RISK_PROFILE_MISSING"
+        result["trade_status_reason"] = (
+            "Account balance and risk settings are required."
+        )
+        result["trade_plan"] = {
+            "status": "UNAVAILABLE",
+            "reason": "Account risk profile missing.",
+        }
+        return result
 
-        else:
-            from risk_management.trade_plan import (
-                TradePlanRequest,
-                create_trade_plan,
-            )
+    if contract is None:
+        result["trade_status"] = "BLOCKED_CONTRACT_UNVERIFIED"
+        result["trade_status_reason"] = (
+            "Technical setup detected, but trading is blocked until "
+            "live broker contract specifications are verified."
+        )
+        result["trade_plan"] = {
+            "status": "UNAVAILABLE",
+            "reason": (
+                "Verify tick size, tick value per lot, minimum lot, "
+                "lot step and maximum lot in MT4."
+            ),
+        }
+        return result
 
-            plan = create_trade_plan(TradePlanRequest(
-                balance=account["balance"],
-                risk_percent=account.get("risk_percent", 1),
-                entry_price=data[-1]["close"],
-                atr_value=indicators["atr"]["value"],
-                direction=signal["signal"],
-                tick_size=contract["tick_size"],
-                tick_value_per_lot=contract["tick_value_per_lot"],
-                min_lot=contract["min_lot"],
-                lot_step=contract["lot_step"],
-                max_lot=contract["max_lot"],
-            ))
+    from risk_management.trade_plan import (
+        TradePlanRequest,
+        create_trade_plan,
+    )
 
-            result["trade_plan"] = plan
-            if plan["status"] != "ACCEPT_FOR_REVIEW":
-                result["signal"] = "NO TRADE"
-                result["signal_status"] = "RISK_REJECTED"
-                result["signal_reason"] = (
-                    "Signal rejected by risk controls: "
-                    + plan.get("reason", "")
-                )
+    plan = create_trade_plan(TradePlanRequest(
+        balance=account["balance"],
+        risk_percent=account.get("risk_percent", 1),
+        entry_price=data[-1]["close"],
+        atr_value=indicators["atr"]["value"],
+        direction=technical_signal,
+        tick_size=contract["tick_size"],
+        tick_value_per_lot=contract["tick_value_per_lot"],
+        min_lot=contract["min_lot"],
+        lot_step=contract["lot_step"],
+        max_lot=contract["max_lot"],
+    ))
+
+    result["trade_plan"] = plan
+
+    if plan["status"] == "ACCEPT_FOR_REVIEW":
+        result["trade_status"] = "ACCEPT_FOR_REVIEW"
+        result["trade_status_reason"] = (
+            "Technical setup passed the configured risk controls. "
+            "Manual review is still required."
+        )
+    else:
+        result["trade_status"] = "REJECTED_RISK_CONTROLS"
+        result["trade_status_reason"] = (
+            "Technical setup detected, but the risk controls rejected "
+            "the proposed trade: " + plan.get("reason", "")
+        )
 
     return result

@@ -127,7 +127,7 @@ private fun TradingDashboard() {
                 NavigationBarItem(
                     selected = selectedTab == DashboardTab.ANALYSIS,
                     onClick = { selectedTab = DashboardTab.ANALYSIS },
-                    icon = { Icon(Icons.Filled.Analytics, contentDescription = null) },
+                    icon = { Text("03", style = MaterialTheme.typography.labelLarge) },
                     label = { Text("تحلیل") }
                 )
             }

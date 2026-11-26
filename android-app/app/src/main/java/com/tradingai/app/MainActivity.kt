@@ -29,6 +29,18 @@ import java.util.Locale
 
 private const val API_BASE = "https://trading-with-mbi-3.onrender.com"
 
+// Confirmed account profile: USD account, $50 balance, maximum 1% risk per trade.
+private const val ACCOUNT_BALANCE_USD = 50.0
+private const val ACCOUNT_RISK_PERCENT = 1.0
+
+// Provisional XAUUSD contract assumptions. Verify against the exact MT4 symbol specification.
+private val XAUUSD_CONTRACT = JSONObject()
+    .put("tick_size", 0.01)
+    .put("tick_value_per_lot", 1.0)
+    .put("min_lot", 0.01)
+    .put("lot_step", 0.01)
+    .put("max_lot", 100.0)
+
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -71,9 +83,6 @@ private fun TradingDashboard() {
                 }
                 state = newState
             } catch (e: CancellationException) {
-                // A LaunchedEffect is cancelled when its keys change or the
-                // composable leaves composition. Cancellation is expected;
-                // never turn it into a UI state update or a displayed error.
                 throw e
             } catch (e: Exception) {
                 state = state.copy(
@@ -81,9 +90,6 @@ private fun TradingDashboard() {
                     error = e.message ?: "خطای دریافت اطلاعات"
                 )
             }
-
-            // delay is cancellable. If the screen leaves composition, the
-            // effect exits cleanly without attempting another state update.
             delay(5000)
         }
     }
@@ -131,9 +137,9 @@ private fun TradingDashboard() {
                         RowValue("وضعیت بازار", q.marketState)
                         RowValue("منبع", q.provider)
                         RowValue("سن قیمت (ثانیه)", q.age)
-                        Text(if (q.stale) "هشدار: قیمت کهنه است؛ تحلیل معتبر نیست." else "قیمت تازه دریافت شده")
+                        Text(if (q.stale) "هشدار: قیمت کهنه است." else "قیمت تازه دریافت شده")
                         Text("زمان: ${q.timestamp}", style = MaterialTheme.typography.bodySmall)
-                    }
+                    } ?: Text("قیمت لحظه‌ای در دسترس نیست.")
                 }
             }
 
@@ -157,8 +163,9 @@ private fun TradingDashboard() {
                 Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text("تحلیل و سیگنال", style = MaterialTheme.typography.titleLarge)
                     val a = state.analysis
-                    if (a == null) Text("در انتظار تحلیل کندل‌ها…")
-                    else {
+                    if (a == null) {
+                        Text("در انتظار پاسخ موتور تحلیل…")
+                    } else {
                         val signal = a.optString("signal", "NO TRADE")
                         Text(
                             signal, style = MaterialTheme.typography.headlineMedium,
@@ -171,6 +178,7 @@ private fun TradingDashboard() {
                         RowValue("وضعیت", a.optString("signal_status", a.optString("status", "نامشخص")))
                         Text("دلیل: ${a.optString("signal_reason", "—")}")
                         RowValue("روند", a.optString("trend", "نامشخص"))
+
                         a.optJSONObject("indicators")?.let { indicators ->
                             indicators.optJSONObject("rsi")?.let { RowValue("RSI", it.optString("value", "—")) }
                             indicators.optJSONObject("atr")?.let { RowValue("ATR", it.optString("value", "—")) }
@@ -181,7 +189,25 @@ private fun TradingDashboard() {
                         }
                         a.optJSONObject("support_resistance")?.let { Text("حمایت و مقاومت: $it") }
                         a.optJSONObject("pullback")?.let { Text("محدوده اصلاح: $it") }
-                        a.optJSONObject("trade_plan")?.let { Text("برنامه ریسک: $it") }
+
+                        a.optJSONObject("account_risk_profile")?.let { risk ->
+                            Text("مدیریت سرمایه", style = MaterialTheme.typography.titleMedium)
+                            RowValue("موجودی حساب", "$" + risk.optString("balance_usd", "50"))
+                            RowValue("ریسک هر معامله", risk.optString("risk_percent", "1") + "%")
+                            RowValue("بودجه ریسک", "$" + risk.optString("risk_budget_usd", "0.50"))
+                        }
+                        a.optJSONObject("trade_plan")?.let { plan ->
+                            RowValue("وضعیت برنامه معامله", plan.optString("status", "نامشخص"))
+                            plan.optString("reason").takeIf { it.isNotBlank() }?.let { Text("دلیل: $it") }
+                            if (plan.optString("status") == "ACCEPT_FOR_REVIEW") {
+                                RowValue("جهت", plan.optString("direction", "—"))
+                                RowValue("ورود", price(symbol, plan.optDouble("entry_price", Double.NaN)))
+                                RowValue("حد ضرر", price(symbol, plan.optDouble("stop_loss", Double.NaN)))
+                                RowValue("حد سود", price(symbol, plan.optDouble("take_profit", Double.NaN)))
+                                RowValue("حجم مجاز", plan.optString("lots", "—"))
+                                Text("این طرح فقط برای بازبینی است؛ سفارش خودکار ارسال نمی‌شود.")
+                            }
+                        }
                     }
                     Text(
                         "این برنامه سفارش به بروکر ارسال نمی‌کند. سیگنال تضمین سود نیست.",
@@ -213,8 +239,7 @@ private fun CandleChart(candles: List<Candle>, modifier: Modifier, symbol: Strin
         drawLine(Color.LightGray, Offset(left, bottom), Offset(right, bottom), 1f)
         candles.forEachIndexed { index, candle ->
             val x = left + slot * (index + 0.5f)
-            val up = candle.close >= candle.open
-            val color = if (up) Color(0xFF159957) else Color(0xFFD64545)
+            val color = if (candle.close >= candle.open) Color(0xFF159957) else Color(0xFFD64545)
             drawLine(color, Offset(x, y(candle.high)), Offset(x, y(candle.low)), 1.5f)
             val yOpen = y(candle.open)
             val yClose = y(candle.close)
@@ -247,6 +272,7 @@ private fun RowValue(label: String, value: String) {
 }
 
 private fun price(symbol: String, value: Double): String {
+    if (!value.isFinite()) return "—"
     val decimals = when (symbol) { "XAUUSD" -> 2; "XAGUSD" -> 3; else -> 5 }
     return String.format(Locale.US, "%.${decimals}f", value)
 }
@@ -256,24 +282,20 @@ private fun timeframeCode(interval: String) = when (interval) {
     "1h" -> "H1"; "4h" -> "H4"; "1d" -> "D1"; else -> "M5"
 }
 
-/*
- * دریافت قیمت، کندل و تحلیل مستقل از یکدیگر انجام می‌شود.
- * خطای OHLC یا تحلیل نباید مانع نمایش قیمت دریافت‌شده شود.
- */
 private fun loadMarket(symbol: String, timeframe: String): ScreenState {
     var quote: Quote? = null
     var candles: List<Candle> = emptyList()
     var analysis: JSONObject? = null
     val errors = mutableListOf<String>()
 
-    // 1) قیمت زنده
+    // 1) Fetch live quote. Quote freshness is displayed, but it does not gate
+    // closed-candle technical analysis.
     try {
         val tick = getJson("$API_BASE/api/v1/market/$symbol/tick")
         val bid = tick.optDouble("bid", Double.NaN)
         val ask = tick.optDouble("ask", Double.NaN)
         val mid = tick.optDouble("mid", Double.NaN)
         val spread = tick.optDouble("spread", Double.NaN)
-
         if (bid.isFinite() && ask.isFinite() && mid.isFinite() && spread.isFinite()) {
             quote = Quote(
                 bid, ask, mid, spread,
@@ -283,14 +305,12 @@ private fun loadMarket(symbol: String, timeframe: String): ScreenState {
                 tick.optBoolean("stale", true),
                 tick.opt("quote_age_seconds")?.toString() ?: "—"
             )
-        } else {
-            errors.add("پاسخ قیمت ناقص است.")
-        }
+        } else errors.add("پاسخ قیمت ناقص است.")
     } catch (e: Exception) {
         errors.add("قیمت: ${e.message ?: "خطای دریافت"}")
     }
 
-    // 2) کندل‌ها؛ مستقل از دریافت قیمت
+    // 2) Fetch and validate closed candles.
     val requestCandles = JSONArray()
     try {
         val response = getJson("$API_BASE/api/v1/market/$symbol/ohlc?interval=$timeframe&limit=100")
@@ -308,17 +328,12 @@ private fun loadMarket(symbol: String, timeframe: String): ScreenState {
             val h = bar.optDouble("high", Double.NaN)
             val l = bar.optDouble("low", Double.NaN)
             val c = bar.optDouble("close", Double.NaN)
-
             if (!o.isFinite() || !h.isFinite() || !l.isFinite() || !c.isFinite()) continue
             if (h < maxOf(o, c) || l > minOf(o, c) || h < l) continue
 
             parsed.add(Candle(o, h, l, c, bar.optString("time", bar.optString("timestamp", "—"))))
             requestCandles.put(
-                JSONObject()
-                    .put("open", o)
-                    .put("high", h)
-                    .put("low", l)
-                    .put("close", c)
+                JSONObject().put("open", o).put("high", h).put("low", l).put("close", c)
             )
         }
         candles = parsed
@@ -327,24 +342,32 @@ private fun loadMarket(symbol: String, timeframe: String): ScreenState {
         errors.add("کندل: ${e.message ?: "خطای دریافت"}")
     }
 
-    // 3) تحلیل؛ خطای تحلیل نباید قیمت و نمودار را مخفی کند
-    if (quote != null && !quote.stale && requestCandles.length() > 0) {
+    // 3) Always submit available closed candles to the analysis endpoint.
+    // A missing/stale tick must not block candle-based indicators.
+    if (requestCandles.length() > 0) {
         try {
-            analysis = postJson(
-                "$API_BASE/api/v1/analysis",
-                JSONObject()
-                    .put("symbol", symbol)
-                    .put("timeframe", timeframeCode(timeframe))
-                    .put("candles", requestCandles)
-            )
+            val payload = JSONObject()
+                .put("symbol", symbol)
+                .put("timeframe", timeframeCode(timeframe))
+                .put("candles", requestCandles)
+                .put("balance", ACCOUNT_BALANCE_USD)
+                .put("risk_percent", ACCOUNT_RISK_PERCENT)
+
+            if (symbol == "XAUUSD") payload.put("contract", JSONObject(XAUUSD_CONTRACT.toString()))
+
+            analysis = postJson("$API_BASE/api/v1/analysis", payload)
         } catch (e: Exception) {
             errors.add("تحلیل: ${e.message ?: "خطای تحلیل"}")
+            analysis = JSONObject()
+                .put("signal", "NO TRADE")
+                .put("signal_status", "ANALYSIS_REQUEST_FAILED")
+                .put("signal_reason", e.message ?: "ارتباط با موتور تحلیل برقرار نشد.")
         }
     } else {
         analysis = JSONObject()
             .put("signal", "NO TRADE")
-            .put("signal_status", "INSUFFICIENT_OR_STALE_DATA")
-            .put("signal_reason", "قیمت تازه یا کندل معتبر برای تحلیل در دسترس نیست.")
+            .put("signal_status", "NO_VALID_CANDLES")
+            .put("signal_reason", "هیچ کندل معتبر بسته‌شده‌ای برای تحلیل دریافت نشد.")
     }
 
     return ScreenState(

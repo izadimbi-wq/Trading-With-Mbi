@@ -16,6 +16,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -65,10 +66,24 @@ private fun TradingDashboard() {
         while (isActive) {
             try {
                 state = state.copy(loading = state.quote == null, error = null)
-                state = withContext(Dispatchers.IO) { loadMarket(symbol, timeframe) }
+                val newState = withContext(Dispatchers.IO) {
+                    loadMarket(symbol, timeframe)
+                }
+                state = newState
+            } catch (e: CancellationException) {
+                // A LaunchedEffect is cancelled when its keys change or the
+                // composable leaves composition. Cancellation is expected;
+                // never turn it into a UI state update or a displayed error.
+                throw e
             } catch (e: Exception) {
-                state = state.copy(loading = false, error = e.message ?: "خطای دریافت اطلاعات")
+                state = state.copy(
+                    loading = false,
+                    error = e.message ?: "خطای دریافت اطلاعات"
+                )
             }
+
+            // delay is cancellable. If the screen leaves composition, the
+            // effect exits cleanly without attempting another state update.
             delay(5000)
         }
     }
@@ -168,8 +183,10 @@ private fun TradingDashboard() {
                         a.optJSONObject("pullback")?.let { Text("محدوده اصلاح: $it") }
                         a.optJSONObject("trade_plan")?.let { Text("برنامه ریسک: $it") }
                     }
-                    Text("این برنامه سفارش به بروکر ارسال نمی‌کند. سیگنال تضمین سود نیست.",
-                        style = MaterialTheme.typography.bodySmall)
+                    Text(
+                        "این برنامه سفارش به بروکر ارسال نمی‌کند. سیگنال تضمین سود نیست.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
                 }
             }
             state.error?.let { Text("خطا: $it", color = MaterialTheme.colorScheme.error) }
@@ -207,7 +224,11 @@ private fun CandleChart(candles: List<Candle>, modifier: Modifier, symbol: Strin
                 androidx.compose.ui.geometry.Size(bodyWidth, maxOf(kotlin.math.abs(yClose - yOpen), 2f))
             )
         }
-        val paint = Paint().apply { color = android.graphics.Color.GRAY; textSize = 10f; isAntiAlias = true }
+        val paint = Paint().apply {
+            color = android.graphics.Color.GRAY
+            textSize = 10f
+            isAntiAlias = true
+        }
         drawContext.canvas.nativeCanvas.drawText(price(symbol, max), left, 12f, paint)
         drawContext.canvas.nativeCanvas.drawText(price(symbol, min), left, size.height - 3f, paint)
     }
@@ -215,7 +236,11 @@ private fun CandleChart(candles: List<Candle>, modifier: Modifier, symbol: Strin
 
 @Composable
 private fun RowValue(label: String, value: String) {
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+    Row(
+        Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
         Text(label)
         Text(value)
     }
@@ -303,7 +328,7 @@ private fun loadMarket(symbol: String, timeframe: String): ScreenState {
     }
 
     // 3) تحلیل؛ خطای تحلیل نباید قیمت و نمودار را مخفی کند
-    if (quote != null && quote.stale.not() && requestCandles.length() > 0) {
+    if (quote != null && !quote.stale && requestCandles.length() > 0) {
         try {
             analysis = postJson(
                 "$API_BASE/api/v1/analysis",

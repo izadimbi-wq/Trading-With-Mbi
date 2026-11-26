@@ -111,7 +111,7 @@ private fun TradingDashboard() {
                 NavigationBarItem(
                     selected = selectedTab == DashboardTab.SYMBOLS,
                     onClick = { selectedTab = DashboardTab.SYMBOLS },
-                    icon = { Icon(Icons.Filled.CurrencyExchange, contentDescription = null) },
+                    icon = { Text("01", style = MaterialTheme.typography.labelLarge) },,
                     label = { Text("نمادها") }
                 )
                 NavigationBarItem(

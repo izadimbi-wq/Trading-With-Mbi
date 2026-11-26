@@ -9,6 +9,10 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Analytics
+import androidx.compose.material.icons.filled.CandlestickChart
+import androidx.compose.material.icons.filled.CurrencyExchange
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -59,11 +63,16 @@ private data class ScreenState(
     val error: String? = null
 )
 
+private enum class DashboardTab(val title: String) {
+    SYMBOLS("نمادها"), CHART("نمودار"), ANALYSIS("تحلیل")
+}
+
 @Composable
 private fun TradingDashboard() {
     var symbol by rememberSaveable { mutableStateOf("XAUUSD") }
     var timeframe by rememberSaveable { mutableStateOf("5m") }
     var balanceText by rememberSaveable { mutableStateOf("50") }
+    var selectedTab by rememberSaveable { mutableStateOf(DashboardTab.SYMBOLS) }
     var refresh by remember { mutableIntStateOf(0) }
     var state by remember { mutableStateOf(ScreenState()) }
 
@@ -100,9 +109,35 @@ private fun TradingDashboard() {
         }
     }
 
-    Scaffold { padding ->
+    Scaffold(
+        bottomBar = {
+            NavigationBar {
+                NavigationBarItem(
+                    selected = selectedTab == DashboardTab.SYMBOLS,
+                    onClick = { selectedTab = DashboardTab.SYMBOLS },
+                    icon = { Icon(Icons.Filled.CurrencyExchange, contentDescription = null) },
+                    label = { Text("نمادها") }
+                )
+                NavigationBarItem(
+                    selected = selectedTab == DashboardTab.CHART,
+                    onClick = { selectedTab = DashboardTab.CHART },
+                    icon = { Icon(Icons.Filled.CandlestickChart, contentDescription = null) },
+                    label = { Text("نمودار") }
+                )
+                NavigationBarItem(
+                    selected = selectedTab == DashboardTab.ANALYSIS,
+                    onClick = { selectedTab = DashboardTab.ANALYSIS },
+                    icon = { Icon(Icons.Filled.Analytics, contentDescription = null) },
+                    label = { Text("تحلیل") }
+                )
+            }
+        }
+    ) { padding ->
         Column(
-            Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(16.dp),
+            Modifier.fillMaxSize()
+                .padding(padding)
+                .verticalScroll(rememberScrollState())
+                .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -114,156 +149,293 @@ private fun TradingDashboard() {
             }
             HorizontalDivider()
 
-            Card(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("مدیریت سرمایه", style = MaterialTheme.typography.titleLarge)
-                    Text("موجودی حساب (دلار آمریکا)")
-                    OutlinedTextField(
-                        value = balanceText,
-                        onValueChange = { input ->
-                            if (input.length <= 12 && input.all { it.isDigit() || it == '.' || it == ',' }) {
-                                balanceText = input
-                            }
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                        isError = !validBalance,
-                        suffix = { Text("USD") },
-                        supportingText = {
-                            Text(
-                                if (validBalance) "ریسک هر معامله: ۱٪  •  بودجه ریسک: $${
-                                    String.format(Locale.US, "%.2f", balance!! * ACCOUNT_RISK_PERCENT / 100.0)
-                                }"
-                                else "موجودی معتبر وارد کنید؛ تحلیل تا آن زمان انجام نمی‌شود."
-                            )
-                        }
-                    )
-                    Text(
-                        "با تغییر موجودی، تحلیل و محاسبات ریسک با مقدار جدید تکرار می‌شود.",
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                }
+            when (selectedTab) {
+                DashboardTab.SYMBOLS -> SymbolsScreen(
+                    symbol = symbol,
+                    onSymbolChange = { symbol = it },
+                    balanceText = balanceText,
+                    onBalanceChange = { balanceText = it },
+                    validBalance = validBalance,
+                    balance = balance,
+                    state = state
+                )
+                DashboardTab.CHART -> ChartScreen(
+                    symbol = symbol,
+                    timeframe = timeframe,
+                    onTimeframeChange = { timeframe = it },
+                    state = state
+                )
+                DashboardTab.ANALYSIS -> AnalysisScreen(
+                    symbol = symbol,
+                    balanceText = balanceText,
+                    balance = balance,
+                    state = state
+                )
             }
 
-            Text("نماد")
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                listOf("XAUUSD", "EURUSD", "XAGUSD").forEach {
-                    FilterChip(symbol == it, { symbol = it }, label = { Text(it) })
-                }
+            state.error?.let {
+                Text("خطا: $it", color = MaterialTheme.colorScheme.error)
             }
-            Text("تایم‌فریم")
-            Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                listOf("1m", "5m", "15m", "30m", "1h", "4h", "1d").chunked(4).forEach { group ->
-                    Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                        group.forEach {
-                            FilterChip(timeframe == it, { timeframe = it }, label = { Text(it) })
-                        }
+            Text(
+                "به‌روزرسانی خودکار هر ۵ ثانیه • سفارش خودکار غیرفعال است",
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
+    }
+}
+
+@Composable
+private fun SymbolsScreen(
+    symbol: String,
+    onSymbolChange: (String) -> Unit,
+    balanceText: String,
+    onBalanceChange: (String) -> Unit,
+    validBalance: Boolean,
+    balance: Double?,
+    state: ScreenState
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("انتخاب نماد", style = MaterialTheme.typography.titleLarge)
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf("XAUUSD", "EURUSD", "XAGUSD").forEach {
+                        FilterChip(
+                            selected = symbol == it,
+                            onClick = { onSymbolChange(it) },
+                            label = { Text(it) }
+                        )
                     }
                 }
             }
+        }
 
-            Card(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("قیمت بازار", style = MaterialTheme.typography.titleLarge)
-                    if (state.loading && state.quote == null) CircularProgressIndicator()
-                    state.quote?.let { q ->
-                        Text(symbol, style = MaterialTheme.typography.titleMedium)
-                        Text(price(symbol, q.mid), style = MaterialTheme.typography.headlineLarge)
-                        RowValue("Bid", price(symbol, q.bid))
-                        RowValue("Ask", price(symbol, q.ask))
-                        RowValue("Spread", price(symbol, q.spread))
-                        RowValue("وضعیت بازار", q.marketState)
-                        RowValue("منبع", q.provider)
-                        RowValue("سن قیمت (ثانیه)", q.age)
-                        Text(if (q.stale) "هشدار: قیمت کهنه است." else "قیمت تازه دریافت شده")
-                        Text("زمان: ${q.timestamp}", style = MaterialTheme.typography.bodySmall)
-                    } ?: Text("قیمت لحظه‌ای در دسترس نیست.")
-                }
-            }
-
-            Card(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("نمودار کندل‌استیک", style = MaterialTheme.typography.titleLarge)
-                    Text("تایم‌فریم $timeframe • تعداد کندل: ${state.candles.size}")
-                    if (state.candles.isNotEmpty()) {
-                        CandleChart(state.candles.takeLast(80), Modifier.fillMaxWidth().height(260.dp), symbol)
-                        state.candles.last().let {
-                            RowValue("Open", price(symbol, it.open))
-                            RowValue("High", price(symbol, it.high))
-                            RowValue("Low", price(symbol, it.low))
-                            RowValue("Close", price(symbol, it.close))
-                        }
-                    } else Text("کندلی برای رسم نمودار دریافت نشده است.")
-                }
-            }
-
-            Card(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("تحلیل و سیگنال", style = MaterialTheme.typography.titleLarge)
-                    val a = state.analysis
-                    if (a == null) {
-                        Text("در انتظار پاسخ موتور تحلیل…")
-                    } else {
-                        val signal = a.optString("signal", "NO TRADE")
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("مدیریت سرمایه", style = MaterialTheme.typography.titleLarge)
+                Text("موجودی حساب (دلار آمریکا)")
+                OutlinedTextField(
+                    value = balanceText,
+                    onValueChange = onBalanceChange,
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    isError = !validBalance,
+                    suffix = { Text("USD") },
+                    supportingText = {
                         Text(
-                            signal, style = MaterialTheme.typography.headlineMedium,
-                            color = when (signal) {
-                                "BUY" -> Color(0xFF16834A)
-                                "SELL" -> Color(0xFFC62828)
-                                else -> MaterialTheme.colorScheme.onSurface
+                            if (validBalance) {
+                                "ریسک هر معامله: ۱٪ • بودجه ریسک: $${
+                                    String.format(
+                                        Locale.US, "%.2f",
+                                        balance!! * ACCOUNT_RISK_PERCENT / 100.0
+                                    )
+                                }"
+                            } else {
+                                "موجودی معتبر وارد کنید؛ تحلیل تا آن زمان انجام نمی‌شود."
                             }
                         )
-                        RowValue("وضعیت", a.optString("signal_status", a.optString("status", "نامشخص")))
-                        Text("دلیل: ${a.optString("signal_reason", "—")}")
-                        RowValue("روند", a.optString("trend", "نامشخص"))
+                    }
+                )
+                Text(
+                    "با تغییر موجودی، تحلیل و محاسبات ریسک با مقدار جدید تکرار می‌شود.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+        }
 
-                        a.optJSONObject("indicators")?.let { indicators ->
-                            indicators.optJSONObject("rsi")?.let { RowValue("RSI", it.optString("value", "—")) }
-                            indicators.optJSONObject("atr")?.let { RowValue("ATR", it.optString("value", "—")) }
-                            indicators.optJSONObject("ema")?.let {
-                                RowValue("EMA سریع", it.optString("fast", "—"))
-                                RowValue("EMA کند", it.optString("slow", "—"))
-                            }
-                        }
-                        a.optJSONObject("support_resistance")?.let { Text("حمایت و مقاومت: $it") }
-                        a.optJSONObject("pullback")?.let { Text("محدوده اصلاح: $it") }
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("قیمت بازار", style = MaterialTheme.typography.titleLarge)
+                if (state.loading && state.quote == null) CircularProgressIndicator()
+                state.quote?.let { q ->
+                    Text(symbol, style = MaterialTheme.typography.titleMedium)
+                    Text(price(symbol, q.mid), style = MaterialTheme.typography.headlineLarge)
+                    RowValue("Bid", price(symbol, q.bid))
+                    RowValue("Ask", price(symbol, q.ask))
+                    RowValue("Spread", price(symbol, q.spread))
+                    RowValue("وضعیت بازار", q.marketState)
+                    RowValue("منبع", q.provider)
+                    RowValue("سن قیمت (ثانیه)", q.age)
+                    Text(
+                        if (q.stale) "هشدار: قیمت کهنه است."
+                        else "قیمت تازه دریافت شده",
+                        color = if (q.stale) MaterialTheme.colorScheme.error
+                        else MaterialTheme.colorScheme.primary
+                    )
+                    Text("زمان: ${q.timestamp}", style = MaterialTheme.typography.bodySmall)
+                } ?: Text("قیمت لحظه‌ای در دسترس نیست.")
+            }
+        }
+    }
+}
 
-                        a.optJSONObject("account_risk_profile")?.let { risk ->
-                            Text("مدیریت سرمایه", style = MaterialTheme.typography.titleMedium)
-                            RowValue("موجودی حساب", "$" + risk.optString("balance_usd", balanceText))
-                            RowValue("ریسک هر معامله", risk.optString("risk_percent", "1") + "%")
-                            RowValue("بودجه ریسک", "$" + risk.optString("risk_budget_usd", "—"))
-                        }
-                        a.optJSONObject("contract_profile")?.let { profile ->
-                            if (profile.optString("status") == "UNVERIFIED") {
-                                Text(
-                                    "مشخصات قرارداد بروکر تأیید نشده است؛ محاسبه حجم و طرح معامله غیرفعال می‌ماند.",
-                                    color = MaterialTheme.colorScheme.error
+@Composable
+private fun ChartScreen(
+    symbol: String,
+    timeframe: String,
+    onTimeframeChange: (String) -> Unit,
+    state: ScreenState
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("تایم‌فریم", style = MaterialTheme.typography.titleLarge)
+                listOf("1m", "5m", "15m", "30m", "1h", "4h", "1d")
+                    .chunked(4).forEach { group ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                            group.forEach {
+                                FilterChip(
+                                    selected = timeframe == it,
+                                    onClick = { onTimeframeChange(it) },
+                                    label = { Text(it) }
                                 )
                             }
                         }
-                        a.optJSONObject("trade_plan")?.let { plan ->
-                            RowValue("وضعیت برنامه معامله", plan.optString("status", "نامشخص"))
-                            plan.optString("reason").takeIf { it.isNotBlank() }?.let { Text("دلیل: $it") }
-                            if (plan.optString("status") == "ACCEPT_FOR_REVIEW") {
-                                RowValue("جهت", plan.optString("direction", "—"))
-                                RowValue("ورود", price(symbol, plan.optDouble("entry_price", Double.NaN)))
-                                RowValue("حد ضرر", price(symbol, plan.optDouble("stop_loss", Double.NaN)))
-                                RowValue("حد سود", price(symbol, plan.optDouble("take_profit", Double.NaN)))
-                                RowValue("حجم مجاز", plan.optString("lots", "—"))
-                                Text("این طرح فقط برای بازبینی است؛ سفارش خودکار ارسال نمی‌شود.")
-                            }
-                        }
                     }
-                    Text(
-                        "این برنامه سفارش به بروکر ارسال نمی‌کند. سیگنال تضمین سود نیست.",
-                        style = MaterialTheme.typography.bodySmall
+            }
+        }
+
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("نمودار کندل‌استیک", style = MaterialTheme.typography.titleLarge)
+                Text("نماد $symbol • تایم‌فریم $timeframe • تعداد کندل: ${state.candles.size}")
+                if (state.candles.isNotEmpty()) {
+                    CandleChart(
+                        state.candles.takeLast(80),
+                        Modifier.fillMaxWidth().height(280.dp),
+                        symbol
                     )
+                    state.candles.last().let {
+                        RowValue("Open", price(symbol, it.open))
+                        RowValue("High", price(symbol, it.high))
+                        RowValue("Low", price(symbol, it.low))
+                        RowValue("Close", price(symbol, it.close))
+                    }
+                } else {
+                    Text("کندلی برای رسم نمودار دریافت نشده است.")
+                    if (state.loading) CircularProgressIndicator()
                 }
             }
-            state.error?.let { Text("خطا: $it", color = MaterialTheme.colorScheme.error) }
-            Text("به‌روزرسانی خودکار هر ۵ ثانیه", style = MaterialTheme.typography.bodySmall)
+        }
+    }
+}
+
+@Composable
+private fun AnalysisScreen(
+    symbol: String,
+    balanceText: String,
+    balance: Double?,
+    state: ScreenState
+) {
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+            Text("تحلیل و سیگنال", style = MaterialTheme.typography.titleLarge)
+            Text("نماد: $symbol")
+            if (state.loading && state.analysis == null) {
+                CircularProgressIndicator()
+                Text("در انتظار پاسخ موتور تحلیل…")
+            } else {
+                val a = state.analysis
+                if (a == null) {
+                    Text("هنوز پاسخی از موتور تحلیل دریافت نشده است.")
+                } else {
+                    val signal = a.optString("signal", "NO TRADE")
+                    Text(
+                        signal,
+                        style = MaterialTheme.typography.headlineMedium,
+                        color = when (signal) {
+                            "BUY" -> Color(0xFF16834A)
+                            "SELL" -> Color(0xFFC62828)
+                            else -> MaterialTheme.colorScheme.onSurface
+                        }
+                    )
+                    RowValue(
+                        "وضعیت",
+                        a.optString("signal_status", a.optString("status", "نامشخص"))
+                    )
+                    Text("دلیل: ${a.optString("signal_reason", "—")}")
+                    RowValue("روند", a.optString("trend", "نامشخص"))
+
+                    a.optJSONObject("indicators")?.let { indicators ->
+                        Text("اندیکاتورها", style = MaterialTheme.typography.titleMedium)
+                        indicators.optJSONObject("rsi")?.let {
+                            RowValue("RSI", it.optString("value", "—"))
+                        }
+                        indicators.optJSONObject("atr")?.let {
+                            RowValue("ATR", it.optString("value", "—"))
+                        }
+                        indicators.optJSONObject("ema")?.let {
+                            RowValue("EMA سریع", it.optString("fast", "—"))
+                            RowValue("EMA کند", it.optString("slow", "—"))
+                        }
+                    }
+                    a.optJSONObject("support_resistance")?.let {
+                        Text("حمایت و مقاومت: $it")
+                    }
+                    a.optJSONObject("pullback")?.let {
+                        Text("محدوده اصلاح: $it")
+                    }
+
+                    a.optJSONObject("account_risk_profile")?.let { risk ->
+                        HorizontalDivider()
+                        Text("مدیریت سرمایه", style = MaterialTheme.typography.titleMedium)
+                        RowValue("موجودی حساب", "$" + risk.optString("balance_usd", balanceText))
+                        RowValue("ریسک هر معامله", risk.optString("risk_percent", "1") + "%")
+                        RowValue("بودجه ریسک", "$" + risk.optString("risk_budget_usd", "—"))
+                    } ?: run {
+                        if (balance != null) {
+                            RowValue("موجودی واردشده", "$" + String.format(Locale.US, "%.2f", balance))
+                            RowValue(
+                                "بودجه ریسک ۱٪",
+                                "$" + String.format(
+                                    Locale.US, "%.2f",
+                                    balance * ACCOUNT_RISK_PERCENT / 100.0
+                                )
+                            )
+                        }
+                    }
+
+                    a.optJSONObject("contract_profile")?.let { profile ->
+                        if (profile.optString("status") == "UNVERIFIED") {
+                            Text(
+                                "مشخصات قرارداد بروکر تأیید نشده است؛ محاسبه حجم و طرح معامله غیرفعال می‌ماند.",
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        }
+                    }
+
+                    a.optJSONObject("trade_plan")?.let { plan ->
+                        HorizontalDivider()
+                        Text("طرح معامله", style = MaterialTheme.typography.titleMedium)
+                        RowValue("وضعیت برنامه معامله", plan.optString("status", "نامشخص"))
+                        plan.optString("reason").takeIf { it.isNotBlank() }?.let {
+                            Text("دلیل: $it")
+                        }
+                        if (plan.optString("status") == "ACCEPT_FOR_REVIEW") {
+                            RowValue("جهت", plan.optString("direction", "—"))
+                            RowValue(
+                                "ورود",
+                                price(symbol, plan.optDouble("entry_price", Double.NaN))
+                            )
+                            RowValue(
+                                "حد ضرر",
+                                price(symbol, plan.optDouble("stop_loss", Double.NaN))
+                            )
+                            RowValue(
+                                "حد سود",
+                                price(symbol, plan.optDouble("take_profit", Double.NaN))
+                            )
+                            RowValue("حجم مجاز", plan.optString("lots", "—"))
+                            Text("این طرح فقط برای بازبینی است؛ سفارش خودکار ارسال نمی‌شود.")
+                        }
+                    }
+                }
+            }
+            Text(
+                "این برنامه سفارش به بروکر ارسال نمی‌کند. سیگنال تضمین سود نیست.",
+                style = MaterialTheme.typography.bodySmall
+            )
         }
     }
 }
@@ -276,24 +448,28 @@ private fun CandleChart(candles: List<Candle>, modifier: Modifier, symbol: Strin
         val right = size.width - 8f
         val top = 18f
         val bottom = size.height - 22f
-        val min = candles.minOf { it.low }
-        val max = candles.maxOf { it.high }
-        val range = (max - min).takeIf { it > 0.0 } ?: 1.0
-        fun y(v: Double) = bottom - ((v - min) / range).toFloat() * (bottom - top)
+        val minValue = candles.minOf { it.low }
+        val maxValue = candles.maxOf { it.high }
+        val range = (maxValue - minValue).takeIf { it > 0.0 } ?: 1.0
+        fun y(v: Double) = bottom - ((v - minValue) / range).toFloat() * (bottom - top)
         val slot = (right - left) / candles.size
         val bodyWidth = (slot * 0.62f).coerceAtLeast(2f)
 
         drawLine(Color.LightGray, Offset(left, bottom), Offset(right, bottom), 1f)
         candles.forEachIndexed { index, candle ->
             val x = left + slot * (index + 0.5f)
-            val color = if (candle.close >= candle.open) Color(0xFF159957) else Color(0xFFD64545)
+            val color = if (candle.close >= candle.open) Color(0xFF159957)
+            else Color(0xFFD64545)
             drawLine(color, Offset(x, y(candle.high)), Offset(x, y(candle.low)), 1.5f)
             val yOpen = y(candle.open)
             val yClose = y(candle.close)
             drawRect(
                 color,
                 Offset(x - bodyWidth / 2f, minOf(yOpen, yClose)),
-                androidx.compose.ui.geometry.Size(bodyWidth, maxOf(kotlin.math.abs(yClose - yOpen), 2f))
+                androidx.compose.ui.geometry.Size(
+                    bodyWidth,
+                    maxOf(kotlin.math.abs(yClose - yOpen), 2f)
+                )
             )
         }
         val paint = Paint().apply {
@@ -301,8 +477,10 @@ private fun CandleChart(candles: List<Candle>, modifier: Modifier, symbol: Strin
             textSize = 10f
             isAntiAlias = true
         }
-        drawContext.canvas.nativeCanvas.drawText(price(symbol, max), left, 12f, paint)
-        drawContext.canvas.nativeCanvas.drawText(price(symbol, min), left, size.height - 3f, paint)
+        drawContext.canvas.nativeCanvas.drawText(price(symbol, maxValue), left, 12f, paint)
+        drawContext.canvas.nativeCanvas.drawText(
+            price(symbol, minValue), left, size.height - 3f, paint
+        )
     }
 }
 
@@ -320,16 +498,30 @@ private fun RowValue(label: String, value: String) {
 
 private fun price(symbol: String, value: Double): String {
     if (!value.isFinite()) return "—"
-    val decimals = when (symbol) { "XAUUSD" -> 2; "XAGUSD" -> 3; else -> 5 }
+    val decimals = when (symbol) {
+        "XAUUSD" -> 2
+        "XAGUSD" -> 3
+        else -> 5
+    }
     return String.format(Locale.US, "%.${decimals}f", value)
 }
 
 private fun timeframeCode(interval: String) = when (interval) {
-    "1m" -> "M1"; "5m" -> "M5"; "15m" -> "M15"; "30m" -> "M30"
-    "1h" -> "H1"; "4h" -> "H4"; "1d" -> "D1"; else -> "M5"
+    "1m" -> "M1"
+    "5m" -> "M5"
+    "15m" -> "M15"
+    "30m" -> "M30"
+    "1h" -> "H1"
+    "4h" -> "H4"
+    "1d" -> "D1"
+    else -> "M5"
 }
 
-private fun loadMarket(symbol: String, timeframe: String, accountBalance: Double): ScreenState {
+private fun loadMarket(
+    symbol: String,
+    timeframe: String,
+    accountBalance: Double
+): ScreenState {
     var quote: Quote? = null
     var candles: List<Candle> = emptyList()
     var analysis: JSONObject? = null
@@ -357,7 +549,9 @@ private fun loadMarket(symbol: String, timeframe: String, accountBalance: Double
 
     val requestCandles = JSONArray()
     try {
-        val response = getJson("$API_BASE/api/v1/market/$symbol/ohlc?interval=$timeframe&limit=100")
+        val response = getJson(
+            "$API_BASE/api/v1/market/$symbol/ohlc?interval=$timeframe&limit=100"
+        )
         val bars = response.optJSONArray("bars")
             ?: response.optJSONArray("candles")
             ?: response.optJSONArray("data")
@@ -374,9 +568,18 @@ private fun loadMarket(symbol: String, timeframe: String, accountBalance: Double
             if (!o.isFinite() || !h.isFinite() || !l.isFinite() || !c.isFinite()) continue
             if (h < maxOf(o, c) || l > minOf(o, c) || h < l) continue
 
-            parsed.add(Candle(o, h, l, c, bar.optString("time", bar.optString("timestamp", "—"))))
+            parsed.add(
+                Candle(
+                    o, h, l, c,
+                    bar.optString("time", bar.optString("timestamp", "—"))
+                )
+            )
             requestCandles.put(
-                JSONObject().put("open", o).put("high", h).put("low", l).put("close", c)
+                JSONObject()
+                    .put("open", o)
+                    .put("high", h)
+                    .put("low", l)
+                    .put("close", c)
             )
         }
         candles = parsed
@@ -393,8 +596,8 @@ private fun loadMarket(symbol: String, timeframe: String, accountBalance: Double
                 .put("candles", requestCandles)
                 .put("balance", accountBalance)
                 .put("risk_percent", ACCOUNT_RISK_PERCENT)
-            // No broker contract constants are sent: Alpari Standard MT4
-            // specifications must be verified from the live symbol properties.
+            // Contract constants are intentionally omitted until broker symbol
+            // specifications are verified from the live instrument properties.
             analysis = postJson("$API_BASE/api/v1/analysis", payload)
         } catch (e: Exception) {
             errors.add("تحلیل: ${e.message ?: "خطای تحلیل"}")
@@ -432,7 +635,9 @@ private fun requestJson(url: String, method: String, body: JSONObject?): JSONObj
         if (body != null) {
             connection.doOutput = true
             connection.setRequestProperty("Content-Type", "application/json; charset=utf-8")
-            connection.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
+            connection.outputStream.use {
+                it.write(body.toString().toByteArray(Charsets.UTF_8))
+            }
         }
         val code = connection.responseCode
         val stream = if (code in 200..299) connection.inputStream else connection.errorStream

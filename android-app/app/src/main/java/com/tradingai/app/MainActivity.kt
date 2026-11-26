@@ -231,43 +231,104 @@ private fun timeframeCode(interval: String) = when (interval) {
     "1h" -> "H1"; "4h" -> "H4"; "1d" -> "D1"; else -> "M5"
 }
 
+/*
+ * دریافت قیمت، کندل و تحلیل مستقل از یکدیگر انجام می‌شود.
+ * خطای OHLC یا تحلیل نباید مانع نمایش قیمت دریافت‌شده شود.
+ */
 private fun loadMarket(symbol: String, timeframe: String): ScreenState {
-    val tick = getJson("$API_BASE/api/v1/market/$symbol/tick")
-    val quote = Quote(
-        tick.getDouble("bid"), tick.getDouble("ask"), tick.getDouble("mid"), tick.getDouble("spread"),
-        tick.optString("timestamp", "—"), tick.optString("provider", "—"),
-        tick.optString("market_state", "—"), tick.optBoolean("stale", true),
-        tick.opt("quote_age_seconds")?.toString() ?: "—"
-    )
-    val response = getJson("$API_BASE/api/v1/market/$symbol/ohlc?interval=$timeframe&limit=100")
-    val bars = response.optJSONArray("bars") ?: JSONArray()
-    val candles = mutableListOf<Candle>()
+    var quote: Quote? = null
+    var candles: List<Candle> = emptyList()
+    var analysis: JSONObject? = null
+    val errors = mutableListOf<String>()
+
+    // 1) قیمت زنده
+    try {
+        val tick = getJson("$API_BASE/api/v1/market/$symbol/tick")
+        val bid = tick.optDouble("bid", Double.NaN)
+        val ask = tick.optDouble("ask", Double.NaN)
+        val mid = tick.optDouble("mid", Double.NaN)
+        val spread = tick.optDouble("spread", Double.NaN)
+
+        if (bid.isFinite() && ask.isFinite() && mid.isFinite() && spread.isFinite()) {
+            quote = Quote(
+                bid, ask, mid, spread,
+                tick.optString("timestamp", "—"),
+                tick.optString("provider", tick.optString("source", "—")),
+                tick.optString("market_state", "—"),
+                tick.optBoolean("stale", true),
+                tick.opt("quote_age_seconds")?.toString() ?: "—"
+            )
+        } else {
+            errors.add("پاسخ قیمت ناقص است.")
+        }
+    } catch (e: Exception) {
+        errors.add("قیمت: ${e.message ?: "خطای دریافت"}")
+    }
+
+    // 2) کندل‌ها؛ مستقل از دریافت قیمت
     val requestCandles = JSONArray()
+    try {
+        val response = getJson("$API_BASE/api/v1/market/$symbol/ohlc?interval=$timeframe&limit=100")
+        val bars = response.optJSONArray("bars")
+            ?: response.optJSONArray("candles")
+            ?: response.optJSONArray("data")
+            ?: JSONArray()
+        val parsed = mutableListOf<Candle>()
 
-    for (i in 0 until bars.length()) {
-        val bar = bars.optJSONObject(i) ?: continue
-        if (bar.optBoolean("isOpen", false)) continue
-        val o = bar.optDouble("open", Double.NaN)
-        val h = bar.optDouble("high", Double.NaN)
-        val l = bar.optDouble("low", Double.NaN)
-        val c = bar.optDouble("close", Double.NaN)
-        if (!o.isFinite() || !h.isFinite() || !l.isFinite() || !c.isFinite()) continue
-        if (h < maxOf(o, c) || l > minOf(o, c) || h < l) continue
-        candles.add(Candle(o, h, l, c, bar.optString("time", bar.optString("timestamp", "—"))))
-        requestCandles.put(JSONObject().put("open", o).put("high", h).put("low", l).put("close", c))
+        for (i in 0 until bars.length()) {
+            val bar = bars.optJSONObject(i) ?: continue
+            if (bar.optBoolean("isOpen", bar.optBoolean("is_open", false))) continue
+
+            val o = bar.optDouble("open", Double.NaN)
+            val h = bar.optDouble("high", Double.NaN)
+            val l = bar.optDouble("low", Double.NaN)
+            val c = bar.optDouble("close", Double.NaN)
+
+            if (!o.isFinite() || !h.isFinite() || !l.isFinite() || !c.isFinite()) continue
+            if (h < maxOf(o, c) || l > minOf(o, c) || h < l) continue
+
+            parsed.add(Candle(o, h, l, c, bar.optString("time", bar.optString("timestamp", "—"))))
+            requestCandles.put(
+                JSONObject()
+                    .put("open", o)
+                    .put("high", h)
+                    .put("low", l)
+                    .put("close", c)
+            )
+        }
+        candles = parsed
+        if (candles.isEmpty()) errors.add("کندل معتبر در پاسخ سرور پیدا نشد.")
+    } catch (e: Exception) {
+        errors.add("کندل: ${e.message ?: "خطای دریافت"}")
     }
 
-    val analysis = if (!quote.stale && requestCandles.length() > 0) {
-        postJson("$API_BASE/api/v1/analysis", JSONObject()
-            .put("symbol", symbol)
-            .put("timeframe", timeframeCode(timeframe))
-            .put("candles", requestCandles))
+    // 3) تحلیل؛ خطای تحلیل نباید قیمت و نمودار را مخفی کند
+    if (quote != null && quote.stale.not() && requestCandles.length() > 0) {
+        try {
+            analysis = postJson(
+                "$API_BASE/api/v1/analysis",
+                JSONObject()
+                    .put("symbol", symbol)
+                    .put("timeframe", timeframeCode(timeframe))
+                    .put("candles", requestCandles)
+            )
+        } catch (e: Exception) {
+            errors.add("تحلیل: ${e.message ?: "خطای تحلیل"}")
+        }
     } else {
-        JSONObject().put("signal", "NO TRADE")
-            .put("signal_status", "STALE_OR_MISSING_DATA")
-            .put("signal_reason", "قیمت کهنه است یا کندل معتبر دریافت نشده است.")
+        analysis = JSONObject()
+            .put("signal", "NO TRADE")
+            .put("signal_status", "INSUFFICIENT_OR_STALE_DATA")
+            .put("signal_reason", "قیمت تازه یا کندل معتبر برای تحلیل در دسترس نیست.")
     }
-    return ScreenState(quote, candles, analysis, false, null)
+
+    return ScreenState(
+        quote = quote,
+        candles = candles,
+        analysis = analysis,
+        loading = false,
+        error = errors.takeIf { it.isNotEmpty() }?.joinToString(" | ")
+    )
 }
 
 private fun getJson(url: String) = requestJson(url, "GET", null)

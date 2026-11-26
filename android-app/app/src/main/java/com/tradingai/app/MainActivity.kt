@@ -117,7 +117,7 @@ private fun TradingDashboard() {
                 NavigationBarItem(
                     selected = selectedTab == DashboardTab.CHART,
                     onClick = { selectedTab = DashboardTab.CHART },
-                    icon = { Icon(Icons.Filled.CandlestickChart, contentDescription = null) },
+                    icon = { Text("02", style = MaterialTheme.typography.labelLarge) },,
                     label = { Text("نمودار") }
                 )
                 NavigationBarItem(

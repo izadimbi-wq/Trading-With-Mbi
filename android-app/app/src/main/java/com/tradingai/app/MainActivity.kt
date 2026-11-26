@@ -117,7 +117,8 @@ private fun TradingDashboard() {
                 NavigationBarItem(
                     selected = selectedTab == DashboardTab.CHART,
                     onClick = { selectedTab = DashboardTab.CHART },
-                    icon = { Text("02", style = MaterialTheme.typography.labelLarge) },,
+                    icon = { Text("02", style = MaterialTheme.typography.labelLarge) },
+                    
                     label = { Text("نمودار") }
                 )
                 NavigationBarItem(

@@ -1,6 +1,6 @@
 #property strict
-#property version   "0.22"
-#property description "TradingAI major/minor multi-symbol multi-timeframe market-data bridge. No order execution."
+#property version   "0.23"
+#property description "TradingAI batched multi-timeframe market-data bridge. No order execution."
 
 input string BackendUrl = "https://YOUR_BACKEND_HOST";
 input string BridgeToken = "SET_A_LONG_RANDOM_TOKEN";
@@ -119,22 +119,44 @@ string BuildContract(string symbol)
    );
 }
 
-bool UploadSymbol(string symbol, ENUM_TIMEFRAMES timeframe)
+// One HTTP request per symbol carries the quote, contract and all seven timeframes.
+bool UploadSymbol(string symbol)
 {
    if(!IsValidSymbolData(symbol)) return false;
 
    int digits = (int)MarketInfo(symbol, MODE_DIGITS);
    double bid = MarketInfo(symbol, MODE_BID);
    double ask = MarketInfo(symbol, MODE_ASK);
-   string tf = TimeframeName(timeframe);
-   if(tf == "") return false;
-
    string contract = SendContractSpecification ? BuildContract(symbol) : "null";
-   string body = StringFormat(
-      "{\"symbol\":\"%s\",\"timeframe\":\"%s\",\"bid\":%s,\"ask\":%s,\"candles\":%s,\"contract\":%s}",
-      symbol, tf, Number(bid, digits), Number(ask, digits),
-      BuildCandles(symbol, timeframe), contract
-   );
+   string body = "";
+
+   if(UploadAllTimeframes)
+   {
+      string candlesByTimeframe = "{";
+      candlesByTimeframe += "\"M1\":" + BuildCandles(symbol, PERIOD_M1);
+      candlesByTimeframe += ",\"M5\":" + BuildCandles(symbol, PERIOD_M5);
+      candlesByTimeframe += ",\"M15\":" + BuildCandles(symbol, PERIOD_M15);
+      candlesByTimeframe += ",\"M30\":" + BuildCandles(symbol, PERIOD_M30);
+      candlesByTimeframe += ",\"H1\":" + BuildCandles(symbol, PERIOD_H1);
+      candlesByTimeframe += ",\"H4\":" + BuildCandles(symbol, PERIOD_H4);
+      candlesByTimeframe += ",\"D1\":" + BuildCandles(symbol, PERIOD_D1);
+      candlesByTimeframe += "}";
+
+      body = StringFormat(
+         "{\"symbol\":\"%s\",\"bid\":%s,\"ask\":%s,\"candles_by_timeframe\":%s,\"contract\":%s}",
+         symbol, Number(bid, digits), Number(ask, digits), candlesByTimeframe, contract
+      );
+   }
+   else
+   {
+      string tf = TimeframeName(SingleUploadTimeframe);
+      if(tf == "") return false;
+      body = StringFormat(
+         "{\"symbol\":\"%s\",\"timeframe\":\"%s\",\"bid\":%s,\"ask\":%s,\"candles\":%s,\"contract\":%s}",
+         symbol, tf, Number(bid, digits), Number(ask, digits),
+         BuildCandles(symbol, SingleUploadTimeframe), contract
+      );
+   }
 
    char post[];
    char result[];
@@ -145,16 +167,16 @@ bool UploadSymbol(string symbol, ENUM_TIMEFRAMES timeframe)
    string responseHeaders;
    ResetLastError();
    int code = WebRequest("POST", BackendUrl + "/api/v1/mt4/market-data",
-                         headers, 5000, post, result, responseHeaders);
+                         headers, 10000, post, result, responseHeaders);
    if(code == -1)
    {
-      Print("TradingAI upload failed for ", symbol, " ", tf, ". Error=", GetLastError(),
+      Print("TradingAI upload failed for ", symbol, ". Error=", GetLastError(),
             ". Add backend URL to MT4 WebRequest allowed list.");
       return false;
    }
    if(code < 200 || code >= 300)
    {
-      Print("TradingAI backend rejected ", symbol, " ", tf, ". HTTP=", code,
+      Print("TradingAI backend rejected ", symbol, ". HTTP=", code,
             " response=", CharArrayToString(result));
       return false;
    }
@@ -174,7 +196,7 @@ int OnInit()
       return INIT_PARAMETERS_INCORRECT;
    }
    EventSetTimer(MathMax(1, UploadIntervalSeconds));
-   Print("TradingAI multi-symbol/multi-timeframe bridge initialized. Order execution is DISABLED.");
+   Print("TradingAI batched multi-symbol/multi-timeframe bridge initialized. Order execution is DISABLED.");
    return INIT_SUCCEEDED;
 }
 
@@ -198,20 +220,7 @@ void OnTimer()
          continue;
       }
 
-      if(UploadAllTimeframes)
-      {
-         UploadSymbol(symbol, PERIOD_M1);
-         UploadSymbol(symbol, PERIOD_M5);
-         UploadSymbol(symbol, PERIOD_M15);
-         UploadSymbol(symbol, PERIOD_M30);
-         UploadSymbol(symbol, PERIOD_H1);
-         UploadSymbol(symbol, PERIOD_H4);
-         UploadSymbol(symbol, PERIOD_D1);
-      }
-      else
-      {
-         UploadSymbol(symbol, SingleUploadTimeframe);
-      }
+      UploadSymbol(symbol);
    }
 }
 

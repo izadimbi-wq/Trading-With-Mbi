@@ -241,14 +241,14 @@ private fun SymbolsScreen(
         }
 
         Card(Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("قیمت بازار", style = MaterialTheme.typography.titleLarge)
                 if (state.loading && state.quote == null) CircularProgressIndicator()
                 state.quote?.let { q ->
                     Text(symbol, style = MaterialTheme.typography.titleMedium)
                     Text(price(symbol, q.mid), style = MaterialTheme.typography.headlineLarge)
-                    RowValue("قیمت فروش (Bid)", price(symbol, q.bid))
-                    RowValue("قیمت خرید (Ask)", price(symbol, q.ask))
+                    RowValue("قیمت فروش (Bid)", price(symbol, q.bid), Color(0xFFC62828))
+                    RowValue("قیمت خرید (Ask)", price(symbol, q.ask), Color(0xFF16834A))
                     RowValue("Spread", price(symbol, q.spread))
                     RowValue("وضعیت بازار", q.marketState)
                     RowValue("منبع", q.provider)
@@ -325,113 +325,70 @@ private fun AnalysisScreen(
     state: ScreenState
 ) {
     Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("تحلیل و سیگنال", style = MaterialTheme.typography.titleLarge)
             Text("نماد: $symbol")
             if (state.loading && state.analysis == null) {
                 CircularProgressIndicator()
-                Text("در انتظار پاسخ موتور تحلیل…")
+                Text("در انتظار دریافت سیگنال…")
             } else {
                 val a = state.analysis
                 if (a == null) {
                     Text("هنوز پاسخی از موتور تحلیل دریافت نشده است.")
                 } else {
-                    val signal = a.optString("signal", "NO TRADE")
-                    Text(
-                        signal,
-                        style = MaterialTheme.typography.headlineMedium,
-                        color = when (signal) {
-                            "BUY" -> Color(0xFF16834A)
-                            "SELL" -> Color(0xFFC62828)
-                            else -> MaterialTheme.colorScheme.onSurface
-                        }
-                    )
-                    RowValue(
-                        "وضعیت",
-                        a.optString("signal_status", a.optString("status", "نامشخص"))
-                    )
-                    Text("دلیل: ${a.optString("signal_reason", "—")}")
-                    RowValue("روند", a.optString("trend", "نامشخص"))
+                    val signal = a.optString("signal", "NO TRADE").uppercase(Locale.US)
+                    val plan = a.optJSONObject("trade_plan")
+                    val validPlan = plan != null &&
+                        plan.optString("status") == "ACCEPT_FOR_REVIEW" &&
+                        signal in listOf("BUY", "SELL")
 
-                    a.optJSONObject("indicators")?.let { indicators ->
-                        Text("اندیکاتورها", style = MaterialTheme.typography.titleMedium)
-                        indicators.optJSONObject("rsi")?.let {
-                            RowValue("RSI", it.optString("value", "—"))
-                        }
-                        indicators.optJSONObject("atr")?.let {
-                            RowValue("ATR", it.optString("value", "—"))
-                        }
-                        indicators.optJSONObject("ema")?.let {
-                            RowValue("EMA سریع", it.optString("fast", "—"))
-                            RowValue("EMA کند", it.optString("slow", "—"))
-                        }
-                    }
-                    a.optJSONObject("support_resistance")?.let {
-                        Text("حمایت و مقاومت: $it")
-                    }
-                    a.optJSONObject("pullback")?.let {
-                        Text("محدوده اصلاح: $it")
-                    }
+                    if (!validPlan) {
+                        Text(
+                            "NO TRADE",
+                            style = MaterialTheme.typography.headlineMedium,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    } else {
+                        val direction = if (signal == "BUY") "خرید (BUY)" else "فروش (SELL)"
+                        val signalColor =
+                            if (signal == "BUY") Color(0xFF16834A) else Color(0xFFC62828)
+                        val entry = plan!!.optDouble("entry_price", Double.NaN)
+                        val stop = plan.optDouble("stop_loss", Double.NaN)
+                        val target = plan.optDouble("take_profit", Double.NaN)
+                        val lots = plan.opt("lots")?.toString() ?: "—"
+                        val risk = a.optJSONObject("account_risk_profile")
+                            ?.optString("risk_percent") ?: "—"
+                        val ratio = if (
+                            entry.isFinite() && stop.isFinite() && target.isFinite() &&
+                            kotlin.math.abs(entry - stop) > 0.0
+                        ) {
+                            String.format(
+                                Locale.US,
+                                "%.2f : 1",
+                                kotlin.math.abs(target - entry) / kotlin.math.abs(entry - stop)
+                            )
+                        } else "—"
+                        val validity = a.optString(
+                            "validity_duration",
+                            a.optString("valid_for", a.optString("signal_validity", "—"))
+                        )
 
-                    a.optJSONObject("account_risk_profile")?.let { risk ->
+                        Text(
+                            direction,
+                            style = MaterialTheme.typography.headlineMedium,
+                            color = signalColor
+                        )
                         HorizontalDivider()
-                        Text("مدیریت سرمایه", style = MaterialTheme.typography.titleMedium)
-                        RowValue("موجودی حساب", "$" + risk.optString("balance_usd", balanceText))
-                        RowValue("ریسک هر معامله", risk.optString("risk_percent", "1") + "%")
-                        RowValue("بودجه ریسک", "$" + risk.optString("risk_budget_usd", "—"))
-                    } ?: run {
-                        if (balance != null) {
-                            RowValue("موجودی واردشده", "$" + String.format(Locale.US, "%.2f", balance))
-                            RowValue(
-                                "بودجه ریسک ۱٪",
-                                "$" + String.format(
-                                    Locale.US, "%.2f",
-                                    balance * ACCOUNT_RISK_PERCENT / 100.0
-                                )
-                            )
-                        }
-                    }
-
-                    a.optJSONObject("contract_profile")?.let { profile ->
-                        if (profile.optString("status") == "UNVERIFIED") {
-                            Text(
-                                "مشخصات قرارداد بروکر تأیید نشده است؛ محاسبه حجم و طرح معامله غیرفعال می‌ماند.",
-                                color = MaterialTheme.colorScheme.error
-                            )
-                        }
-                    }
-
-                    a.optJSONObject("trade_plan")?.let { plan ->
-                        HorizontalDivider()
-                        Text("طرح معامله", style = MaterialTheme.typography.titleMedium)
-                        RowValue("وضعیت برنامه معامله", plan.optString("status", "نامشخص"))
-                        plan.optString("reason").takeIf { it.isNotBlank() }?.let {
-                            Text("دلیل: $it")
-                        }
-                        if (plan.optString("status") == "ACCEPT_FOR_REVIEW") {
-                            RowValue("جهت", plan.optString("direction", "—"))
-                            RowValue(
-                                "ورود",
-                                price(symbol, plan.optDouble("entry_price", Double.NaN))
-                            )
-                            RowValue(
-                                "حد ضرر",
-                                price(symbol, plan.optDouble("stop_loss", Double.NaN))
-                            )
-                            RowValue(
-                                "حد سود",
-                                price(symbol, plan.optDouble("take_profit", Double.NaN))
-                            )
-                            RowValue("حجم مجاز", plan.optString("lots", "—"))
-                            Text("این طرح فقط برای بازبینی است؛ سفارش خودکار ارسال نمی‌شود.")
-                        }
+                        RowValue("قیمت ورود", price(symbol, entry))
+                        RowValue("حد سود (TP)", price(symbol, target))
+                        RowValue("حد ضرر (SL)", price(symbol, stop))
+                        RowValue("مدت اعتبار سیگنال", validity)
+                        RowValue("حجم معامله", lots)
+                        RowValue("درصد ریسک", if (risk == "—") risk else "$risk%")
+                        RowValue("نسبت ریسک به بازده", ratio)
                     }
                 }
             }
-            Text(
-                "این برنامه سفارش به بروکر ارسال نمی‌کند. سیگنال تضمین سود نیست.",
-                style = MaterialTheme.typography.bodySmall
-            )
         }
     }
 }
@@ -481,14 +438,18 @@ private fun CandleChart(candles: List<Candle>, modifier: Modifier, symbol: Strin
 }
 
 @Composable
-private fun RowValue(label: String, value: String) {
+private fun RowValue(
+    label: String,
+    value: String,
+    valueColor: Color = MaterialTheme.colorScheme.onSurface
+) {
     Row(
         Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(label)
-        Text(value)
+        Text(value, color = valueColor)
     }
 }
 

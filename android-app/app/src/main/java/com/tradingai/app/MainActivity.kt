@@ -33,6 +33,18 @@ import java.util.Locale
 private const val API_BASE = "https://trading-with-mbi-3.onrender.com"
 private const val ACCOUNT_RISK_PERCENT = 1.0
 
+private val FOREX_PAIRS = listOf(
+    // Major pairs
+    "EURUSD", "GBPUSD", "USDJPY", "USDCHF", "USDCAD", "AUDUSD", "NZDUSD",
+    // Minor / cross pairs
+    "EURGBP", "EURJPY", "EURCHF", "EURCAD", "EURAUD", "EURNZD",
+    "GBPJPY", "GBPCHF", "GBPCAD", "GBPAUD", "GBPNZD",
+    "AUDJPY", "AUDCHF", "AUDCAD", "AUDNZD",
+    "NZDJPY", "NZDCHF", "NZDCAD", "CADJPY", "CADCHF", "CHFJPY"
+)
+
+private val TRADING_SYMBOLS = listOf("XAUUSD", "XAGUSD") + FOREX_PAIRS
+
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -190,12 +202,26 @@ private fun SymbolsScreen(
     balance: Double?,
     state: ScreenState
 ) {
+    var symbolQuery by rememberSaveable { mutableStateOf("") }
+    val filteredSymbols = TRADING_SYMBOLS.filter {
+        it.contains(symbolQuery.trim().uppercase(Locale.US))
+    }
+
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("انتخاب نماد", style = MaterialTheme.typography.titleLarge)
+                OutlinedTextField(
+                    value = symbolQuery,
+                    onValueChange = { symbolQuery = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    label = { Text("جستجوی جفت‌ارز یا نماد") },
+                    placeholder = { Text("برای مثال GBPJPY") }
+                )
+                Text("فلزات گران‌بها", style = MaterialTheme.typography.labelLarge)
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    listOf("XAUUSD", "EURUSD", "XAGUSD").forEach {
+                    listOf("XAUUSD", "XAGUSD").forEach {
                         FilterChip(
                             selected = symbol == it,
                             onClick = { onSymbolChange(it) },
@@ -203,6 +229,27 @@ private fun SymbolsScreen(
                         )
                     }
                 }
+                Text("جفت‌ارزهای اصلی و فرعی (28)",
+                    style = MaterialTheme.typography.labelLarge)
+                filteredSymbols.filter { it in FOREX_PAIRS }.chunked(3).forEach { group ->
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        group.forEach { pair ->
+                            FilterChip(
+                                selected = symbol == pair,
+                                onClick = { onSymbolChange(pair) },
+                                label = { Text(pair) }
+                            )
+                        }
+                    }
+                }
+                if (filteredSymbols.isEmpty()) {
+                    Text("نمادی با این عبارت پیدا نشد.",
+                        style = MaterialTheme.typography.bodySmall)
+                }
+                Text(
+                    "برای دریافت قیمت و کندل، نماد باید در فهرست نمادهای بروکر MT4 موجود باشد.",
+                    style = MaterialTheme.typography.bodySmall
+                )
             }
         }
 

@@ -1,20 +1,14 @@
 #property strict
-#property version   "0.21"
-#property description "TradingAI major/minor multi-symbol market-data bridge. No order execution."
+#property version   "0.22"
+#property description "TradingAI major/minor multi-symbol multi-timeframe market-data bridge. No order execution."
 
 input string BackendUrl = "https://YOUR_BACKEND_HOST";
 input string BridgeToken = "SET_A_LONG_RANDOM_TOKEN";
-input int UploadIntervalSeconds = 5;
+input int UploadIntervalSeconds = 10;
 input int CandleCount = 120;
-input ENUM_TIMEFRAMES UploadTimeframe = PERIOD_M5;
+input bool UploadAllTimeframes = true;
+input ENUM_TIMEFRAMES SingleUploadTimeframe = PERIOD_M5;
 input bool SendContractSpecification = true;
-
-string JsonEscape(string value)
-{
-   StringReplace(value, "\\", "\\\\");
-   StringReplace(value, "\"", "\\\"");
-   return value;
-}
 
 string Number(double value, int digits)
 {
@@ -28,8 +22,7 @@ bool IsValidSymbolData(string symbol)
    return (bid > 0 && ask >= bid);
 }
 
-// Canonical major/minor FX pairs plus the two existing precious-metal symbols.
-// Broker suffixes/prefixes (for example EURUSD.a or mEURUSD) are supported.
+// Recognizes standard major/minor pairs and XAU/XAG, including broker suffixes/prefixes.
 bool IsSupportedFxSymbol(string brokerSymbol)
 {
    string raw = brokerSymbol;
@@ -60,21 +53,33 @@ bool IsSupportedFxSymbol(string brokerSymbol)
    return false;
 }
 
-string BuildCandles(string symbol)
+string TimeframeName(ENUM_TIMEFRAMES timeframe)
+{
+   if(timeframe == PERIOD_M1) return "M1";
+   if(timeframe == PERIOD_M5) return "M5";
+   if(timeframe == PERIOD_M15) return "M15";
+   if(timeframe == PERIOD_M30) return "M30";
+   if(timeframe == PERIOD_H1) return "H1";
+   if(timeframe == PERIOD_H4) return "H4";
+   if(timeframe == PERIOD_D1) return "D1";
+   return "";
+}
+
+string BuildCandles(string symbol, ENUM_TIMEFRAMES timeframe)
 {
    string out = "[";
-   int total = iBars(symbol, UploadTimeframe);
-   int count = MathMin(CandleCount, total - 1); // exclude live candle at index 0
+   int total = iBars(symbol, timeframe);
+   int count = MathMin(CandleCount, total - 1); // exclude current, still-open candle
    bool first = true;
 
    for(int shift = count; shift >= 1; shift--)
    {
-      datetime t = iTime(symbol, UploadTimeframe, shift);
-      double o = iOpen(symbol, UploadTimeframe, shift);
-      double h = iHigh(symbol, UploadTimeframe, shift);
-      double l = iLow(symbol, UploadTimeframe, shift);
-      double c = iClose(symbol, UploadTimeframe, shift);
-      long volume = iVolume(symbol, UploadTimeframe, shift);
+      datetime t = iTime(symbol, timeframe, shift);
+      double o = iOpen(symbol, timeframe, shift);
+      double h = iHigh(symbol, timeframe, shift);
+      double l = iLow(symbol, timeframe, shift);
+      double c = iClose(symbol, timeframe, shift);
+      long volume = iVolume(symbol, timeframe, shift);
 
       if(t <= 0 || o <= 0 || h <= 0 || l <= 0 || c <= 0) continue;
       if(h < MathMax(o, c) || l > MathMin(o, c) || h < l) continue;
@@ -97,7 +102,7 @@ string BuildCandles(string symbol)
 
 string BuildContract(string symbol)
 {
-   // MT4 MODE_TICKSIZE is in points; convert to an actual price increment.
+   // MT4 MODE_TICKSIZE is in points; convert to the actual price increment.
    double tickSize = MarketInfo(symbol, MODE_TICKSIZE) * MarketInfo(symbol, MODE_POINT);
    double tickValue = MarketInfo(symbol, MODE_TICKVALUE);
    double minLot = MarketInfo(symbol, MODE_MINLOT);
@@ -114,26 +119,21 @@ string BuildContract(string symbol)
    );
 }
 
-bool UploadSymbol(string symbol)
+bool UploadSymbol(string symbol, ENUM_TIMEFRAMES timeframe)
 {
    if(!IsValidSymbolData(symbol)) return false;
 
    int digits = (int)MarketInfo(symbol, MODE_DIGITS);
    double bid = MarketInfo(symbol, MODE_BID);
    double ask = MarketInfo(symbol, MODE_ASK);
-   string tf = "M5";
-   if(UploadTimeframe == PERIOD_M1) tf = "M1";
-   else if(UploadTimeframe == PERIOD_M15) tf = "M15";
-   else if(UploadTimeframe == PERIOD_M30) tf = "M30";
-   else if(UploadTimeframe == PERIOD_H1) tf = "H1";
-   else if(UploadTimeframe == PERIOD_H4) tf = "H4";
-   else if(UploadTimeframe == PERIOD_D1) tf = "D1";
+   string tf = TimeframeName(timeframe);
+   if(tf == "") return false;
 
    string contract = SendContractSpecification ? BuildContract(symbol) : "null";
    string body = StringFormat(
       "{\"symbol\":\"%s\",\"timeframe\":\"%s\",\"bid\":%s,\"ask\":%s,\"candles\":%s,\"contract\":%s}",
-      JsonEscape(symbol), tf, Number(bid, digits), Number(ask, digits),
-      BuildCandles(symbol), contract
+      symbol, tf, Number(bid, digits), Number(ask, digits),
+      BuildCandles(symbol, timeframe), contract
    );
 
    char post[];
@@ -148,13 +148,13 @@ bool UploadSymbol(string symbol)
                          headers, 5000, post, result, responseHeaders);
    if(code == -1)
    {
-      Print("TradingAI upload failed for ", symbol, ". Error=", GetLastError(),
-            ". Add backend URL to MT4: Tools > Options > Expert Advisors > Allow WebRequest.");
+      Print("TradingAI upload failed for ", symbol, " ", tf, ". Error=", GetLastError(),
+            ". Add backend URL to MT4 WebRequest allowed list.");
       return false;
    }
    if(code < 200 || code >= 300)
    {
-      Print("TradingAI backend rejected ", symbol, ". HTTP=", code,
+      Print("TradingAI backend rejected ", symbol, " ", tf, ". HTTP=", code,
             " response=", CharArrayToString(result));
       return false;
    }
@@ -174,7 +174,7 @@ int OnInit()
       return INIT_PARAMETERS_INCORRECT;
    }
    EventSetTimer(MathMax(1, UploadIntervalSeconds));
-   Print("TradingAI major/minor multi-symbol bridge initialized. Order execution is DISABLED.");
+   Print("TradingAI multi-symbol/multi-timeframe bridge initialized. Order execution is DISABLED.");
    return INIT_SUCCEEDED;
 }
 
@@ -185,8 +185,7 @@ void OnDeinit(const int reason)
 
 void OnTimer()
 {
-   // Enumerate all broker-listed symbols, not only those already visible in Market Watch.
-   // Only the 28 standard major/minor pairs and the existing XAU/XAG symbols are selected.
+   // Enumerate broker-listed symbols, not only those already visible in Market Watch.
    int total = SymbolsTotal(false);
    for(int i = 0; i < total; i++)
    {
@@ -198,9 +197,23 @@ void OnTimer()
          Print("TradingAI: broker symbol could not be selected: ", symbol);
          continue;
       }
-      UploadSymbol(symbol);
+
+      if(UploadAllTimeframes)
+      {
+         UploadSymbol(symbol, PERIOD_M1);
+         UploadSymbol(symbol, PERIOD_M5);
+         UploadSymbol(symbol, PERIOD_M15);
+         UploadSymbol(symbol, PERIOD_M30);
+         UploadSymbol(symbol, PERIOD_H1);
+         UploadSymbol(symbol, PERIOD_H4);
+         UploadSymbol(symbol, PERIOD_D1);
+      }
+      else
+      {
+         UploadSymbol(symbol, SingleUploadTimeframe);
+      }
    }
 }
 
-// This EA sends market data only. It deliberately contains no OrderSend/OrderClose calls.
+// Market-data bridge only. There are intentionally no OrderSend/OrderClose calls.
 void OnTick() {}

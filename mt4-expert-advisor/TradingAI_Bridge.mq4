@@ -1,6 +1,6 @@
 #property strict
-#property version   "0.20"
-#property description "TradingAI multi-symbol market-data bridge. No order execution."
+#property version   "0.21"
+#property description "TradingAI major/minor multi-symbol market-data bridge. No order execution."
 
 input string BackendUrl = "https://YOUR_BACKEND_HOST";
 input string BridgeToken = "SET_A_LONG_RANDOM_TOKEN";
@@ -8,8 +8,6 @@ input int UploadIntervalSeconds = 5;
 input int CandleCount = 120;
 input ENUM_TIMEFRAMES UploadTimeframe = PERIOD_M5;
 input bool SendContractSpecification = true;
-
-datetime lastUpload = 0;
 
 string JsonEscape(string value)
 {
@@ -28,6 +26,38 @@ bool IsValidSymbolData(string symbol)
    double bid = MarketInfo(symbol, MODE_BID);
    double ask = MarketInfo(symbol, MODE_ASK);
    return (bid > 0 && ask >= bid);
+}
+
+// Canonical major/minor FX pairs plus the two existing precious-metal symbols.
+// Broker suffixes/prefixes (for example EURUSD.a or mEURUSD) are supported.
+bool IsSupportedFxSymbol(string brokerSymbol)
+{
+   string raw = brokerSymbol;
+   StringToUpper(raw);
+   string letters = "";
+   for(int i = 0; i < StringLen(raw); i++)
+   {
+      int ch = StringGetCharacter(raw, i);
+      if(ch >= 65 && ch <= 90)
+         letters += StringSubstr(raw, i, 1);
+   }
+
+   string allowed[30] = {
+      "EURUSD", "GBPUSD", "USDJPY", "USDCHF", "USDCAD", "AUDUSD", "NZDUSD",
+      "EURGBP", "EURJPY", "EURCHF", "EURCAD", "EURAUD", "EURNZD",
+      "GBPJPY", "GBPCHF", "GBPCAD", "GBPAUD", "GBPNZD",
+      "AUDJPY", "AUDCHF", "AUDCAD", "AUDNZD",
+      "NZDJPY", "NZDCHF", "NZDCAD", "CADJPY", "CADCHF", "CHFJPY",
+      "XAUUSD", "XAGUSD"
+   };
+
+   for(int start = 0; start <= StringLen(letters) - 6; start++)
+   {
+      string candidate = StringSubstr(letters, start, 6);
+      for(int p = 0; p < 30; p++)
+         if(candidate == allowed[p]) return true;
+   }
+   return false;
 }
 
 string BuildCandles(string symbol)
@@ -67,7 +97,8 @@ string BuildCandles(string symbol)
 
 string BuildContract(string symbol)
 {
-   double tickSize = MarketInfo(symbol, MODE_TICKSIZE);
+   // MT4 MODE_TICKSIZE is in points; convert to an actual price increment.
+   double tickSize = MarketInfo(symbol, MODE_TICKSIZE) * MarketInfo(symbol, MODE_POINT);
    double tickValue = MarketInfo(symbol, MODE_TICKVALUE);
    double minLot = MarketInfo(symbol, MODE_MINLOT);
    double lotStep = MarketInfo(symbol, MODE_LOTSTEP);
@@ -143,7 +174,7 @@ int OnInit()
       return INIT_PARAMETERS_INCORRECT;
    }
    EventSetTimer(MathMax(1, UploadIntervalSeconds));
-   Print("TradingAI multi-symbol bridge initialized. Order execution is DISABLED.");
+   Print("TradingAI major/minor multi-symbol bridge initialized. Order execution is DISABLED.");
    return INIT_SUCCEEDED;
 }
 
@@ -154,11 +185,19 @@ void OnDeinit(const int reason)
 
 void OnTimer()
 {
-   int total = SymbolsTotal(true); // symbols visible in Market Watch
+   // Enumerate all broker-listed symbols, not only those already visible in Market Watch.
+   // Only the 28 standard major/minor pairs and the existing XAU/XAG symbols are selected.
+   int total = SymbolsTotal(false);
    for(int i = 0; i < total; i++)
    {
-      string symbol = SymbolName(i, true);
-      if(symbol == "") continue;
+      string symbol = SymbolName(i, false);
+      if(symbol == "" || !IsSupportedFxSymbol(symbol)) continue;
+
+      if(!SymbolSelect(symbol, true))
+      {
+         Print("TradingAI: broker symbol could not be selected: ", symbol);
+         continue;
+      }
       UploadSymbol(symbol);
    }
 }

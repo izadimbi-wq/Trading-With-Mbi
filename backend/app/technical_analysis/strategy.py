@@ -3,25 +3,47 @@ from .indicators import ema, rsi, atr, macd, ichimoku
 from .signal_engine import generate_signal
 from .levels import support_resistance, pullback_zone
 
-SUPPORTED_SYMBOLS = {"XAUUSD", "EURUSD", "XAGUSD"}
 SUPPORTED_TIMEFRAMES = {"M1", "M5", "M15", "M30", "H1", "H4", "D1"}
 SETTINGS = {
     "ema_fast": 20, "ema_slow": 50, "rsi": 14, "atr": 14,
     "macd_fast": 12, "macd_slow": 26, "macd_signal": 9,
     "tenkan": 9, "kijun": 26, "senkou_b": 52, "displacement": 26,
 }
-SYMBOL_PRICE_BANDS = {"XAUUSD": (100.0, 100000.0), "EURUSD": (0.1, 10.0), "XAGUSD": (1.0, 1000.0)}
+CURRENCY_CODES = {
+    "USD", "EUR", "GBP", "JPY", "CHF", "CAD", "AUD", "NZD",
+    "CNH", "CNY", "HKD", "SGD", "SEK", "NOK", "DKK", "PLN",
+    "CZK", "HUF", "TRY", "ZAR", "MXN", "ILS", "THB", "AED",
+}
+METALS = {"XAU", "XAG", "XPT", "XPD"}
+
+
+def normalize_symbol(symbol):
+    raw = "".join(ch for ch in str(symbol).upper() if ch.isalpha())
+    allowed = CURRENCY_CODES | METALS
+    for i in range(max(1, len(raw) - 5)):
+        candidate = raw[i:i + 6]
+        if len(candidate) == 6 and candidate[:3] in allowed and candidate[3:] in allowed:
+            return candidate
+    return raw
+
+
+def supported_symbol(symbol):
+    s = normalize_symbol(symbol)
+    if len(s) != 6:
+        return False
+    base, quote = s[:3], s[3:]
+    return ((base in CURRENCY_CODES and quote in CURRENCY_CODES and base != quote)
+            or (base in METALS and quote in {"USD", "EUR", "GBP", "JPY", "CHF"}))
 
 
 def validate_market_input(symbol, timeframe, candles):
-    symbol, timeframe = str(symbol).upper(), str(timeframe).upper()
-    if symbol not in SUPPORTED_SYMBOLS:
+    symbol, timeframe = normalize_symbol(symbol), str(timeframe).upper()
+    if not supported_symbol(symbol):
         raise ValueError("Unsupported trading symbol.")
     if timeframe not in SUPPORTED_TIMEFRAMES:
         raise ValueError("Unsupported timeframe.")
     if not isinstance(candles, list) or not candles:
         raise ValueError("Candles must be a non-empty list.")
-    low_band, high_band = SYMBOL_PRICE_BANDS[symbol]
     required = ("open", "high", "low", "close")
     for idx, candle in enumerate(candles):
         if not isinstance(candle, dict) or not all(k in candle for k in required):
@@ -31,8 +53,6 @@ def validate_market_input(symbol, timeframe, candles):
         values = [candle[k] for k in required]
         if any(isinstance(v, bool) or not isinstance(v, (int, float)) or not isfinite(v) or v <= 0 for v in values):
             raise ValueError(f"Invalid candle {idx}.")
-        if any(v < low_band or v > high_band for v in values):
-            raise ValueError(f"PRICE_SCALE_MISMATCH: candle prices do not match {symbol}.")
         if candle["high"] < max(candle["open"], candle["close"]) or candle["low"] > min(candle["open"], candle["close"]) or candle["high"] < candle["low"]:
             raise ValueError(f"Invalid OHLC candle {idx}.")
     return {"symbol": symbol, "timeframe": timeframe, "candles": candles}

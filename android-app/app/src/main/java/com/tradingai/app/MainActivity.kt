@@ -1,6 +1,15 @@
 package com.tradingai.app
 
+import android.Manifest
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Paint
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -11,6 +20,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -45,11 +55,59 @@ private val FOREX_PAIRS = listOf(
 
 private val TRADING_SYMBOLS = listOf("XAUUSD", "XAGUSD") + FOREX_PAIRS
 
+private data class NotificationTarget(
+    val symbol: String,
+    val timeframe: String
+)
+
 class MainActivity : ComponentActivity() {
+    private var notificationTarget by mutableStateOf<NotificationTarget?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { MaterialTheme { TradingDashboard() } }
+        createSignalNotificationChannel(this)
+        requestNotificationPermissionIfNeeded()
+        notificationTarget = notificationTargetFrom(intent)
+        setContent {
+            MaterialTheme {
+                TradingDashboard(
+                    notificationTarget = notificationTarget,
+                    onNotificationTargetConsumed = { notificationTarget = null }
+                )
+            }
+        }
     }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        notificationTarget = notificationTargetFrom(intent)
+    }
+
+    private fun requestNotificationPermissionIfNeeded() {
+        if (
+            Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissions(
+                arrayOf(Manifest.permission.POST_NOTIFICATIONS),
+                NOTIFICATION_PERMISSION_REQUEST
+            )
+        }
+    }
+
+    companion object {
+        private const val NOTIFICATION_PERMISSION_REQUEST = 7301
+    }
+}
+
+private fun notificationTargetFrom(intent: Intent?): NotificationTarget? {
+    val symbol = intent?.getStringExtra(EXTRA_SIGNAL_SYMBOL)?.trim()?.uppercase(Locale.US)
+        ?: return null
+    val timeframe = intent.getStringExtra(EXTRA_SIGNAL_TIMEFRAME)?.trim()
+        ?: return null
+    if (symbol.isBlank() || timeframe.isBlank()) return null
+    return NotificationTarget(symbol, timeframe)
 }
 
 private data class Quote(
@@ -76,13 +134,28 @@ private enum class DashboardTab(val title: String) {
 }
 
 @Composable
-private fun TradingDashboard() {
-    var symbol by rememberSaveable { mutableStateOf("XAUUSD") }
+private fun TradingDashboard(
+    notificationTarget: NotificationTarget?,
+    onNotificationTargetConsumed: () -> Unit
+) {
+    val appContext = LocalContext.current.applicationContext
+    var symbol by rememberSaveable {
+        mutableStateOf(notificationTarget?.symbol ?: "XAUUSD")
+    }
     var timeframe by rememberSaveable { mutableStateOf("5m") }
     var balanceText by rememberSaveable { mutableStateOf("50") }
     var selectedTab by rememberSaveable { mutableStateOf(DashboardTab.SYMBOLS) }
     var refresh by remember { mutableIntStateOf(0) }
     var state by remember { mutableStateOf(ScreenState()) }
+
+    LaunchedEffect(notificationTarget) {
+        notificationTarget?.let { target ->
+            symbol = target.symbol
+            timeframe = target.timeframe
+            selectedTab = DashboardTab.ANALYSIS
+            onNotificationTargetConsumed()
+        }
+    }
 
     val balance = balanceText.trim().replace(',', '.').toDoubleOrNull()
     val validBalance = balance != null && balance.isFinite() && balance > 0.0
@@ -104,6 +177,14 @@ private fun TradingDashboard() {
                         loadMarket(symbol, timeframe, balance!!)
                     }
                     state = newState
+                    newState.analysis?.let { analysis ->
+                        notifyIfNewValidSignal(
+                            context = appContext,
+                            symbol = symbol,
+                            timeframe = timeframe,
+                            analysis = analysis
+                        )
+                    }
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
@@ -648,5 +729,132 @@ private fun requestJson(url: String, method: String, body: JSONObject?): JSONObj
         return JSONObject(response)
     } finally {
         connection.disconnect()
+    }
+}
+
+
+private const val SIGNAL_CHANNEL_ID = "tradingai_signals"
+private const val SIGNAL_CHANNEL_NAME = "اعلان سیگنال‌های معاملاتی"
+private const val SIGNAL_NOTIFICATION_PREFS = "tradingai_signal_notifications"
+private const val EXTRA_SIGNAL_SYMBOL = "signal_symbol"
+private const val EXTRA_SIGNAL_TIMEFRAME = "signal_timeframe"
+
+private fun createSignalNotificationChannel(context: Context) {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val channel = NotificationChannel(
+            SIGNAL_CHANNEL_ID,
+            SIGNAL_CHANNEL_NAME,
+            NotificationManager.IMPORTANCE_HIGH
+        ).apply {
+            description = "اعلان سیگنال‌های معتبر خرید و فروش TradingAI"
+            enableVibration(true)
+        }
+        manager.createNotificationChannel(channel)
+    }
+}
+
+/**
+ * A notification is raised only for an accepted, risk-checked BUY/SELL plan.
+ * A signature stored in private preferences prevents the 5-second polling loop
+ * from repeatedly notifying the same setup.
+ */
+private fun notifyIfNewValidSignal(
+    context: Context,
+    symbol: String,
+    timeframe: String,
+    analysis: JSONObject
+) {
+    val direction = analysis.optString("signal", "NO TRADE").uppercase(Locale.US)
+    if (direction != "BUY" && direction != "SELL") return
+
+    val plan = analysis.optJSONObject("trade_plan") ?: return
+    if (plan.optString("status") != "ACCEPT_FOR_REVIEW") return
+
+    val entry = plan.optDouble("entry_price", Double.NaN)
+    val stopLoss = plan.optDouble("stop_loss", Double.NaN)
+    val takeProfit = plan.optDouble("take_profit", Double.NaN)
+    if (!entry.isFinite() || !stopLoss.isFinite() || !takeProfit.isFinite()) return
+    if (entry <= 0.0 || stopLoss <= 0.0 || takeProfit <= 0.0) return
+
+    val lots = plan.opt("lots")?.toString() ?: "—"
+    val riskProfile = analysis.optJSONObject("account_risk_profile")
+    val riskPercent = riskProfile?.optString("risk_percent") ?: "1"
+    val normalizedTimeframe = timeframe.trim()
+    val signature = listOf(
+        symbol.uppercase(Locale.US),
+        normalizedTimeframe,
+        direction,
+        String.format(Locale.US, "%.5f", entry),
+        String.format(Locale.US, "%.5f", stopLoss),
+        String.format(Locale.US, "%.5f", takeProfit)
+    ).joinToString("|")
+
+    val preferences = context.getSharedPreferences(
+        SIGNAL_NOTIFICATION_PREFS,
+        Context.MODE_PRIVATE
+    )
+    if (preferences.getString("last_notified_signature", null) == signature) return
+
+    val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+    if (
+        Build.VERSION.SDK_INT >= 33 &&
+        context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+    ) {
+        return
+    }
+
+    val intent = Intent(context, MainActivity::class.java).apply {
+        flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+        putExtra(EXTRA_SIGNAL_SYMBOL, symbol)
+        putExtra(EXTRA_SIGNAL_TIMEFRAME, normalizedTimeframe)
+    }
+    val pendingIntent = PendingIntent.getActivity(
+        context,
+        (signature.hashCode() and 0x7fffffff),
+        intent,
+        PendingIntent.FLAG_UPDATE_CURRENT or
+            (if (Build.VERSION.SDK_INT >= 23) PendingIntent.FLAG_IMMUTABLE else 0)
+    )
+
+    val directionFa = if (direction == "BUY") "خرید" else "فروش"
+    val title = "سیگنال $directionFa جدید: ${symbol.uppercase(Locale.US)}"
+    val details = buildString {
+        append("تایم‌فریم: $normalizedTimeframe")
+        append("\nورود: ${price(symbol, entry)}")
+        append("\nحد ضرر: ${price(symbol, stopLoss)}")
+        append("\nحد سود: ${price(symbol, takeProfit)}")
+        append("\nحجم: $lots")
+        append("\nریسک: $riskPercent%")
+        append("\nبرای مشاهده تحلیل لمس کنید.")
+    }
+
+    val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        Notification.Builder(context, SIGNAL_CHANNEL_ID)
+    } else {
+        @Suppress("DEPRECATION")
+        Notification.Builder(context)
+    }
+
+    val notification = builder
+        .setSmallIcon(android.R.drawable.ic_dialog_info)
+        .setContentTitle(title)
+        .setContentText("$normalizedTimeframe • ورود ${price(symbol, entry)}")
+        .setStyle(Notification.BigTextStyle().bigText(details))
+        .setContentIntent(pendingIntent)
+        .setAutoCancel(true)
+        .setCategory(Notification.CATEGORY_RECOMMENDATION)
+        .setPriority(Notification.PRIORITY_HIGH)
+        .setWhen(System.currentTimeMillis())
+        .build()
+
+    try {
+        val notificationId = signature.hashCode() and 0x7fffffff
+        manager.notify(notificationId, notification)
+        preferences.edit()
+            .putString("last_notified_signature", signature)
+            .apply()
+    } catch (_: SecurityException) {
+        // Permission may have been revoked while the app was running.
     }
 }
